@@ -58,6 +58,7 @@ PrimaryExpr = Operand
 
 Operand = identifier
         | int | float | string
+        | FStringExpr
         | ListExpr | ListComp
         | DictExpr | DictComp
         | '(' [Expression [',']] ')'
@@ -70,6 +71,9 @@ SliceSuffix = '[' [Expression] [':' Test [':' Test]] ']' .
 
 Arguments = Argument {',' Argument} .
 Argument  = Test | identifier '=' Test | '*' Test | '**' Test .
+
+FStringExpr        = fstring_begin FStringReplacement {fstring_interior FStringReplacement} fstring_end .
+FStringReplacement = Expression ['='] ['!' fstring_conversion] [':' fstring_format] .
 
 ListExpr = '[' [Expression [',']] ']' .
 ListComp = '[' Test {CompClause} ']'.
@@ -114,6 +118,7 @@ LoopVariables = PrimaryExpr {',' PrimaryExpr} .
 - spaces: newline, eof, indent, outdent.
 - identifier.
 - literals: string, int, float.
+- f-string parts: fstring_begin, fstring_interior, fstring_conversion, fstring_format, fstring_end
 - plus all quoted tokens such as '+=', 'return'.
 
 # Notes:

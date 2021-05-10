@@ -34,8 +34,15 @@ const (
 	IDENT  // x
 	INT    // 123
 	FLOAT  // 1.23e45
-	STRING // "foo" or 'foo' or '''foo''' or r'foo' or r"foo"
+	STRING // "foo" or 'foo' or '''foo''' or r'foo' or r"foo" or f'foo' or f'''foo''' or f"foo"
 	BYTES  // b"foo", etc
+
+	// f-string tokens
+	FSTRING_BEGIN    // f'foo{ or f'''foo{ or f"foo{
+	FSTRING_INTERIOR // }foo{
+	FSTRING_END      // }foo' or }foo''' or }foo"
+	CONVERSION_STR   // !s
+	CONVERSION_REPR  // !r
 
 	// Punctuation
 	PLUS          // +
@@ -114,73 +121,78 @@ func (tok Token) GoString() string {
 }
 
 var tokenNames = [...]string{
-	ILLEGAL:       "illegal token",
-	EOF:           "end of file",
-	NEWLINE:       "newline",
-	INDENT:        "indent",
-	OUTDENT:       "outdent",
-	IDENT:         "identifier",
-	INT:           "int literal",
-	FLOAT:         "float literal",
-	STRING:        "string literal",
-	PLUS:          "+",
-	MINUS:         "-",
-	STAR:          "*",
-	SLASH:         "/",
-	SLASHSLASH:    "//",
-	PERCENT:       "%",
-	AMP:           "&",
-	PIPE:          "|",
-	CIRCUMFLEX:    "^",
-	LTLT:          "<<",
-	GTGT:          ">>",
-	TILDE:         "~",
-	DOT:           ".",
-	COMMA:         ",",
-	EQ:            "=",
-	SEMI:          ";",
-	COLON:         ":",
-	LPAREN:        "(",
-	RPAREN:        ")",
-	LBRACK:        "[",
-	RBRACK:        "]",
-	LBRACE:        "{",
-	RBRACE:        "}",
-	LT:            "<",
-	GT:            ">",
-	GE:            ">=",
-	LE:            "<=",
-	EQL:           "==",
-	NEQ:           "!=",
-	PLUS_EQ:       "+=",
-	MINUS_EQ:      "-=",
-	STAR_EQ:       "*=",
-	SLASH_EQ:      "/=",
-	SLASHSLASH_EQ: "//=",
-	PERCENT_EQ:    "%=",
-	AMP_EQ:        "&=",
-	PIPE_EQ:       "|=",
-	CIRCUMFLEX_EQ: "^=",
-	LTLT_EQ:       "<<=",
-	GTGT_EQ:       ">>=",
-	STARSTAR:      "**",
-	AND:           "and",
-	BREAK:         "break",
-	CONTINUE:      "continue",
-	DEF:           "def",
-	ELIF:          "elif",
-	ELSE:          "else",
-	FOR:           "for",
-	IF:            "if",
-	IN:            "in",
-	LAMBDA:        "lambda",
-	LOAD:          "load",
-	NOT:           "not",
-	NOT_IN:        "not in",
-	OR:            "or",
-	PASS:          "pass",
-	RETURN:        "return",
-	WHILE:         "while",
+	ILLEGAL:          "illegal token",
+	EOF:              "end of file",
+	NEWLINE:          "newline",
+	INDENT:           "indent",
+	OUTDENT:          "outdent",
+	IDENT:            "identifier",
+	INT:              "int literal",
+	FLOAT:            "float literal",
+	STRING:           "string literal",
+	FSTRING_BEGIN:    "interpolated string literal begin",
+	FSTRING_INTERIOR: "interpolated string literal interior",
+	FSTRING_END:      "interpolated string literal end",
+	CONVERSION_STR:   "!s",
+	CONVERSION_REPR:  "!r",
+	PLUS:             "+",
+	MINUS:            "-",
+	STAR:             "*",
+	SLASH:            "/",
+	SLASHSLASH:       "//",
+	PERCENT:          "%",
+	AMP:              "&",
+	PIPE:             "|",
+	CIRCUMFLEX:       "^",
+	LTLT:             "<<",
+	GTGT:             ">>",
+	TILDE:            "~",
+	DOT:              ".",
+	COMMA:            ",",
+	EQ:               "=",
+	SEMI:             ";",
+	COLON:            ":",
+	LPAREN:           "(",
+	RPAREN:           ")",
+	LBRACK:           "[",
+	RBRACK:           "]",
+	LBRACE:           "{",
+	RBRACE:           "}",
+	LT:               "<",
+	GT:               ">",
+	GE:               ">=",
+	LE:               "<=",
+	EQL:              "==",
+	NEQ:              "!=",
+	PLUS_EQ:          "+=",
+	MINUS_EQ:         "-=",
+	STAR_EQ:          "*=",
+	SLASH_EQ:         "/=",
+	SLASHSLASH_EQ:    "//=",
+	PERCENT_EQ:       "%=",
+	AMP_EQ:           "&=",
+	PIPE_EQ:          "|=",
+	CIRCUMFLEX_EQ:    "^=",
+	LTLT_EQ:          "<<=",
+	GTGT_EQ:          ">>=",
+	STARSTAR:         "**",
+	AND:              "and",
+	BREAK:            "break",
+	CONTINUE:         "continue",
+	DEF:              "def",
+	ELIF:             "elif",
+	ELSE:             "else",
+	FOR:              "for",
+	IF:               "if",
+	IN:               "in",
+	LAMBDA:           "lambda",
+	LOAD:             "load",
+	NOT:              "not",
+	NOT_IN:           "not in",
+	OR:               "or",
+	PASS:             "pass",
+	RETURN:           "return",
+	WHILE:            "while",
 }
 
 // A FilePortion describes the content of a portion of a file.
@@ -242,7 +254,14 @@ func (p Position) isBefore(q Position) bool {
 	return p.Col < q.Col
 }
 
-// An scanner represents a single input file being parsed.
+// An fstring holds information about interpolated string literals.
+type fstring struct {
+	quote  rune // the kind of quote used by this fstring
+	triple bool // whether or not this fstring is triple-quoted
+	depth  int  // the nesting depth at the fstring's occurrence
+}
+
+// A scanner represents a single input file being parsed.
 type scanner struct {
 	rest           []byte    // rest of input (in REPL, a line of input)
 	token          []byte    // token being scanned
@@ -254,6 +273,7 @@ type scanner struct {
 	keepComments   bool      // accumulate comments in slice
 	lineComments   []Comment // list of full line comments (if keepComments)
 	suffixComments []Comment // list of suffix comments (if keepComments)
+	fstringStack   []fstring // stack of fstring information
 
 	readline func() ([]byte, error) // read next line of input (REPL only)
 }
@@ -655,6 +675,11 @@ start:
 			sc.readRune()
 			c = sc.peekRune()
 			return sc.scanString(val, c)
+		} else if c == 'f' && len(sc.rest) > 1 && (sc.rest[1] == '"' || sc.rest[1] == '\'') {
+			// f"..."
+			sc.readRune()
+			c = sc.peekRune()
+			return sc.scanFStringBegin(val, c)
 		}
 
 		for isIdent(c) {
@@ -685,7 +710,13 @@ start:
 		}
 		panic("unreachable")
 
-	case ']', ')', '}':
+	case '}':
+		if len(sc.fstringStack) != 0 && sc.depth == sc.fstringStack[len(sc.fstringStack)-1].depth {
+			return sc.scanFstringInteriorOrEnd(val)
+		}
+		fallthrough
+
+	case ']', ')':
 		if sc.depth == 0 {
 			sc.errorf(sc.pos, "unexpected %q", c)
 		} else {
@@ -768,6 +799,14 @@ start:
 			}
 			return GT
 		case '!':
+			switch sc.peekRune() {
+			case 's':
+				sc.readRune()
+				return CONVERSION_STR
+			case 'r':
+				sc.readRune()
+				return CONVERSION_REPR
+			}
 			sc.error(start, "unexpected input character '!'")
 		case '+':
 			return PLUS
@@ -822,6 +861,26 @@ start:
 
 	sc.errorf(sc.pos, "unexpected input character %#q", c)
 	panic("unreachable")
+}
+
+func (sc *scanner) nextLiteralChars(val *tokenValue, end string) bool {
+	c := sc.peekRune()
+	if strings.ContainsRune(end, c) {
+		return false
+	}
+
+	sc.startToken(val)
+	for {
+		if strings.ContainsRune(end, c) {
+			break
+		} else if c == 0 {
+			sc.error(val.pos, "unexpected EOF")
+		}
+		sc.readRune()
+		c = sc.peekRune()
+	}
+	sc.endToken(val)
+	return true
 }
 
 func (sc *scanner) scanString(val *tokenValue, quote rune) Token {
@@ -905,6 +964,231 @@ func (sc *scanner) scanString(val *tokenValue, quote rune) Token {
 	} else {
 		return STRING
 	}
+}
+
+func (sc *scanner) scanFStringBegin(val *tokenValue, quote rune) Token {
+	start := sc.pos
+	triple := len(sc.rest) >= 3 && sc.rest[0] == byte(quote) && sc.rest[1] == byte(quote) && sc.rest[2] == byte(quote)
+	sc.readRune()
+
+	// String literals may contain escaped or unescaped newlines,
+	// causing them to span multiple lines (gulps) of REPL input;
+	// they are the only such token. Thus we cannot call endToken,
+	// as it assumes sc.rest is unchanged since startToken.
+	// Instead, buffer the token here.
+	// TODO(adonovan): opt: buffer only if we encounter a newline.
+	raw := new(strings.Builder)
+
+	// Copy the prefix, e.g. r' or " (see startToken).
+	raw.Write(sc.token[:len(sc.token)-len(sc.rest)])
+
+	token := FSTRING_BEGIN
+	if !triple {
+		// single-quoted string literal
+		for {
+			if sc.eof() {
+				sc.error(val.pos, "unexpected EOF in string")
+			}
+			c := sc.readRune()
+			raw.WriteRune(c)
+			if c == quote {
+				token = STRING
+				break
+			}
+			if c == '{' {
+				if sc.peekRune() != '{' {
+					break
+				}
+				c = sc.readRune()
+				raw.WriteRune(c)
+				continue
+			}
+			if c == '}' && sc.peekRune() == '}' {
+				c = sc.readRune()
+				raw.WriteRune(c)
+				continue
+			}
+			if c == '\n' {
+				sc.error(val.pos, "unexpected newline in string")
+			}
+			if c == '\\' {
+				if sc.eof() {
+					sc.error(val.pos, "unexpected EOF in string")
+				}
+				c = sc.readRune()
+				raw.WriteRune(c)
+			}
+		}
+	} else {
+		// triple-quoted string literal
+		sc.readRune()
+		raw.WriteRune(quote)
+		sc.readRune()
+		raw.WriteRune(quote)
+
+		quoteCount := 0
+		for {
+			if sc.eof() {
+				sc.error(val.pos, "unexpected EOF in string")
+			}
+			c := sc.readRune()
+			raw.WriteRune(c)
+			if c == quote {
+				quoteCount++
+				if quoteCount == 3 {
+					token = STRING
+					break
+				}
+			} else {
+				quoteCount = 0
+			}
+			if c == '{' {
+				if sc.peekRune() != '{' {
+					break
+				}
+				c = sc.readRune()
+				raw.WriteRune(c)
+				continue
+			}
+			if c == '}' && sc.peekRune() == '}' {
+				c = sc.readRune()
+				raw.WriteRune(c)
+				continue
+			}
+			if c == '\\' {
+				if sc.eof() {
+					sc.error(val.pos, "unexpected EOF in string")
+				}
+				c = sc.readRune()
+				raw.WriteRune(c)
+			}
+		}
+	}
+	val.raw = raw.String()
+
+	s, _, err := unquoteFstring(val.raw)
+	if err != nil {
+		sc.error(start, err.Error())
+	}
+	val.string = s
+
+	if token == FSTRING_BEGIN {
+		sc.fstringStack = append(sc.fstringStack, fstring{
+			quote:  quote,
+			triple: triple,
+			depth:  sc.depth,
+		})
+	}
+	return token
+}
+
+func (sc *scanner) scanFstringInteriorOrEnd(val *tokenValue) Token {
+	fs := &sc.fstringStack[len(sc.fstringStack)-1]
+
+	start := sc.pos
+	sc.readRune()
+
+	// String literals may contain escaped or unescaped newlines,
+	// causing them to span multiple lines (gulps) of REPL input;
+	// they are the only such token. Thus we cannot call endToken,
+	// as it assumes sc.rest is unchanged since startToken.
+	// Instead, buffer the token here.
+	// TODO(adonovan): opt: buffer only if we encounter a newline.
+	raw := new(strings.Builder)
+
+	// Copy the prefix, e.g. r' or " (see startToken).
+	raw.Write(sc.token[:len(sc.token)-len(sc.rest)])
+
+	token := FSTRING_INTERIOR
+	if !fs.triple {
+		// single-quoted string literal
+		for {
+			if sc.eof() {
+				sc.error(val.pos, "unexpected EOF in string")
+			}
+			c := sc.readRune()
+			raw.WriteRune(c)
+			if c == fs.quote {
+				token = FSTRING_END
+				break
+			}
+			if c == '{' {
+				if sc.peekRune() != '{' {
+					break
+				}
+				c = sc.readRune()
+				raw.WriteRune(c)
+				continue
+			}
+			if c == '}' && sc.peekRune() == '}' {
+				c = sc.readRune()
+				raw.WriteRune(c)
+				continue
+			}
+			if c == '\n' {
+				sc.error(val.pos, "unexpected newline in string")
+			}
+			if c == '\\' {
+				if sc.eof() {
+					sc.error(val.pos, "unexpected EOF in string")
+				}
+				c = sc.readRune()
+				raw.WriteRune(c)
+			}
+		}
+	} else {
+		// triple-quoted string literal
+
+		quoteCount := 0
+		for {
+			if sc.eof() {
+				sc.error(val.pos, "unexpected EOF in string")
+			}
+			c := sc.readRune()
+			raw.WriteRune(c)
+			if c == fs.quote {
+				quoteCount++
+				if quoteCount == 3 {
+					token = FSTRING_END
+					break
+				}
+			} else {
+				quoteCount = 0
+			}
+			if c == '{' {
+				if sc.peekRune() != '{' {
+					break
+				}
+				c = sc.readRune()
+				raw.WriteRune(c)
+				continue
+			}
+			if c == '}' && sc.peekRune() == '}' {
+				c = sc.readRune()
+				raw.WriteRune(c)
+				continue
+			}
+			if c == '\\' {
+				if sc.eof() {
+					sc.error(val.pos, "unexpected EOF in string")
+				}
+				c = sc.readRune()
+				raw.WriteRune(c)
+			}
+		}
+	}
+	val.raw = raw.String()
+
+	s, _, err := unquoteFstring(val.raw)
+	if err != nil {
+		sc.error(start, err.Error())
+	}
+	val.string = s
+
+	if token == FSTRING_END {
+		sc.fstringStack = sc.fstringStack[:len(sc.fstringStack)-1]
+	}
+	return token
 }
 
 func (sc *scanner) scanNumber(val *tokenValue, c rune) Token {

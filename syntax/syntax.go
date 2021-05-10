@@ -225,6 +225,7 @@ func (*CondExpr) expr()      {}
 func (*DictEntry) expr()     {}
 func (*DictExpr) expr()      {}
 func (*DotExpr) expr()       {}
+func (*FStringExpr) expr()   {}
 func (*Ident) expr()         {}
 func (*IndexExpr) expr()     {}
 func (*LambdaExpr) expr()    {}
@@ -259,6 +260,91 @@ type Literal struct {
 
 func (x *Literal) Span() (start, end Position) {
 	return x.TokenPos, x.TokenPos.add(x.Raw)
+}
+
+// An FStringExpr represents an interpolated string expression: f"{foo}"
+type FStringExpr struct {
+	commentsRef
+	Parts []*FStringPart
+	End   *Literal
+}
+
+func (x *FStringExpr) Span() (start, end Position) {
+	start, _ = x.Parts[0].Span()
+	_, end = x.End.Span()
+	return
+}
+
+// An FStringPart represents a piece of the interior of an interpolated string,
+// e.g.
+//
+//      f"text{foo}bar"
+//      ^^^^^^^^^^
+//
+//      f"text{foo}bar{baz}"
+//                ^^^^^^^^
+//
+// Used only within an FStringExpr.
+type FStringPart struct {
+	String      *Literal
+	Replacement *FStringReplacement
+}
+
+func (x *FStringPart) Span() (start, end Position) {
+	start = x.String.TokenPos
+	return start, end
+}
+
+// An FStringReplacement represents an interpolated string replacement expression:
+// f"foo{bar}"
+//       ^^^
+//
+// Used only within an FStringPart or an FStringFormat.
+type FStringReplacement struct {
+	Value      Expr
+	Conversion *FStringConversion
+	Format     *FStringFormat
+}
+
+func (x *FStringReplacement) Span() (start, end Position) {
+	start, end = x.Value.Span()
+	switch {
+	case x.Format != nil:
+		_, end = x.Format.Span()
+	case x.Conversion != nil:
+		_, end = x.Conversion.Span()
+	}
+	return
+}
+
+// An FStringConversion represents the conversion portion of an interpolated string replacement
+// expression: f"foo{42!r:x}"
+//                     ^^
+//
+// Used only within an FStringReplacement.
+type FStringConversion struct {
+	Kind Token
+	Pos  Position
+}
+
+func (x *FStringConversion) Span() (start, end Position) {
+	return x.Pos, x.Pos.add("!s")
+}
+
+// An FStringFormat represents the format portion of an interpolated string replacement
+// expression: f"foo{42:x}"
+//                     ^^
+//
+// Used only within an FStringReplacement.
+type FStringFormat struct {
+	Colon Position
+	Value *Literal
+}
+
+func (x *FStringFormat) Span() (start, end Position) {
+	start = x.Colon
+	_, end = x.Value.Span()
+	return
 }
 
 // A ParenExpr represents a parenthesized expression: (X).

@@ -86,6 +86,51 @@ func unquote(quoted string) (s string, triple, isByte bool, err error) {
 	} else {
 		unquoteChars = "\\\r"
 	}
+
+	s, triple, err = unquoteContents(quoted, unquoteChars, isByte)
+	return
+}
+
+func unquoteFstring(quoted string) (s string, triple bool, err error) {
+	begin := strings.HasPrefix(quoted, "f")
+	if begin {
+		quoted = quoted[1:]
+		if !strings.HasSuffix(quoted, "{") {
+			s, triple, _, err = unquote(quoted)
+			return
+		}
+	}
+
+	if len(quoted) < 2 {
+		err = fmt.Errorf("string literal too short")
+		return
+	}
+
+	if begin {
+		quote := quoted[0]
+		if len(quoted) >= 3 && quoted[1] == quote && quoted[2] == quote {
+			triple = true
+			quoted = quoted[3 : len(quoted)-1]
+		} else {
+			quoted = quoted[1 : len(quoted)-1]
+		}
+	} else if quoted[len(quoted)-1] != '{' {
+		quote := quoted[len(quoted)-1]
+		if len(quoted) >= 3 && quoted[len(quoted)-3] == quote && quoted[len(quoted)-2] == quote {
+			triple = true
+			quoted = quoted[1 : len(quoted)-3]
+		} else {
+			quoted = quoted[1 : len(quoted)-1]
+		}
+	} else {
+		quoted = quoted[1 : len(quoted)-1]
+	}
+
+	s, triple, err = unquoteContents(quoted, "\\\r{}", false)
+	return
+}
+
+func unquoteContents(quoted, unquoteChars string, isByte bool) (s string, triple bool, err error) {
 	if !strings.ContainsAny(quoted, unquoteChars) {
 		s = quoted
 		return
@@ -123,6 +168,12 @@ func unquote(quoted string) (s string, triple, isByte bool, err error) {
 		if len(quoted) == 1 {
 			err = fmt.Errorf(`truncated escape sequence \`)
 			return
+		}
+
+		// Check for '{{' and '}}' in formatted strings.
+		if quoted[0] == '{' || quoted[0] == '}' {
+			quoted = quoted[2:]
+			continue
 		}
 
 		switch quoted[1] {

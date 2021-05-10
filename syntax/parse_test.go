@@ -10,6 +10,7 @@ import (
 	"fmt"
 	"go/build"
 	"io/ioutil"
+	"os"
 	"path/filepath"
 	"reflect"
 	"strings"
@@ -118,6 +119,16 @@ func TestExprParseTrees(t *testing.T) {
 			`(BinaryExpr X=a Op=and Y=(UnaryExpr Op=not X=b))`},
 		{`[e for x in y if cond1 if cond2]`,
 			`(Comprehension Body=e Clauses=((ForClause Vars=x X=y) (IfClause Cond=cond1) (IfClause Cond=cond2)))`}, // github.com/google/skylark/issues/53
+		{`f"foo {bar}"`,
+			`(FStringExpr Parts=((FStringPart String="foo " Replacement=(FStringReplacement Value=bar))) End="")`},
+		{`f"foo {a.bar} {b.baz}"`,
+			`(FStringExpr Parts=((FStringPart String="foo " Replacement=(FStringReplacement Value=(DotExpr X=a Name=bar))) (FStringPart String=" " Replacement=(FStringReplacement Value=(DotExpr X=b Name=baz)))) End="")`},
+		{`f"foo {a["bar"]} {b["baz"]}"`,
+			`(FStringExpr Parts=((FStringPart String="foo " Replacement=(FStringReplacement Value=(IndexExpr X=a Y="bar"))) (FStringPart String=" " Replacement=(FStringReplacement Value=(IndexExpr X=b Y="baz")))) End="")`},
+		{`f"foo {bar:x}"`,
+			`(FStringExpr Parts=((FStringPart String="foo " Replacement=(FStringReplacement Value=bar Format=(FStringFormat Value="x")))) End="")`},
+		{`f"foo {bar!r:x}"`,
+			`(FStringExpr Parts=((FStringPart String="foo " Replacement=(FStringReplacement Value=bar Conversion=(FStringConversion Kind=!r) Format=(FStringFormat Value="x")))) End="")`},
 	} {
 		e, err := syntax.ParseExpr("foo.star", test.input, 0)
 		var got string
@@ -362,12 +373,16 @@ func writeTree(out *bytes.Buffer, x reflect.Value) {
 		switch v := x.Interface().(type) {
 		case syntax.Literal:
 			switch v.Token {
-			case syntax.STRING:
+			case syntax.STRING, syntax.FSTRING_BEGIN, syntax.FSTRING_INTERIOR, syntax.FSTRING_END:
 				fmt.Fprintf(out, "%q", v.Value)
 			case syntax.BYTES:
 				fmt.Fprintf(out, "b%q", v.Value)
 			case syntax.INT:
 				fmt.Fprintf(out, "%d", v.Value)
+			case syntax.LBRACK:
+				fmt.Fprintf(out, "{")
+			case syntax.RBRACK:
+				fmt.Fprintf(out, "}")
 			}
 			return
 		case syntax.Ident:
@@ -466,6 +481,11 @@ func TestFilePortion(t *testing.T) {
 // dataFile is the same as starlarktest.DataFile.
 // We make a copy to avoid a dependency cycle.
 var dataFile = func(pkgdir, filename string) string {
+	gomod := os.Getenv("GOMOD")
+	if gomod != "" {
+		return filepath.Join(filepath.Dir(gomod), pkgdir, filename)
+	}
+
 	return filepath.Join(build.Default.GOPATH, "src/go.starlark.net", pkgdir, filename)
 }
 

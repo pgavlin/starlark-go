@@ -66,6 +66,11 @@ func Walk(n Node, f func(Node) bool) {
 	case *Ident, *Literal:
 		// no-op
 
+	case *FStringExpr:
+		for _, p := range n.Parts {
+			Walk(p.Replacement.Value, f)
+		}
+
 	case *ListExpr:
 		for _, x := range n.List {
 			Walk(x, f)

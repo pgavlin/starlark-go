@@ -633,6 +633,14 @@ func (r *resolver) expr(e syntax.Expr) {
 
 	case *syntax.Literal:
 
+	case *syntax.FStringExpr:
+		for _, p := range e.Parts {
+			r.expr(p.Replacement.Value)
+			if p.Replacement.Format != nil {
+				r.expr(p.Replacement.Format.Value)
+			}
+		}
+
 	case *syntax.ListExpr:
 		for _, x := range e.List {
 			r.expr(x)
