@@ -67,7 +67,7 @@ func ParseCompoundStmt(filename string, readline func() ([]byte, error)) (f *Fil
 
 	var stmts []Stmt
 	switch p.tok {
-	case DEF, IF, FOR, WHILE:
+	case AT, DEF, IF, FOR, WHILE:
 		stmts = p.parseStmt(stmts)
 	case NEWLINE:
 		// blank line
@@ -143,7 +143,7 @@ func (p *parser) parseFile() *File {
 }
 
 func (p *parser) parseStmt(stmts []Stmt) []Stmt {
-	if p.tok == DEF {
+	if p.tok == DEF || p.tok == AT {
 		return append(stmts, p.parseDefStmt())
 	} else if p.tok == IF {
 		return append(stmts, p.parseIfStmt())
@@ -156,7 +156,21 @@ func (p *parser) parseStmt(stmts []Stmt) []Stmt {
 }
 
 func (p *parser) parseDefStmt() Stmt {
-	defpos := p.nextToken() // consume DEF
+	var decorators []*Decorator
+	for p.tok == AT {
+		at := p.nextToken() // consume AT
+		expr := Expr(p.parseIdent())
+		if p.tok == LPAREN {
+			expr = p.parseCallSuffix(expr)
+		}
+		p.consume(NEWLINE)
+		decorators = append(decorators, &Decorator{
+			At:   at,
+			Expr: expr,
+		})
+	}
+
+	defpos := p.consume(DEF)
 	id := p.parseIdent()
 	p.consume(LPAREN)
 	params := p.parseParams()
@@ -164,10 +178,11 @@ func (p *parser) parseDefStmt() Stmt {
 	p.consume(COLON)
 	body := p.parseSuite()
 	return &DefStmt{
-		Def:    defpos,
-		Name:   id,
-		Params: params,
-		Body:   body,
+		Decorators: decorators,
+		Def:        defpos,
+		Name:       id,
+		Params:     params,
+		Body:       body,
 	}
 }
 

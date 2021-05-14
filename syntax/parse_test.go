@@ -188,6 +188,15 @@ else:
 def h():
 	pass`,
 			`(DefStmt Name=f Body=((DefStmt Name=g Body=((BranchStmt Token=pass))) (BranchStmt Token=pass)))`},
+		{`@f
+def g(): pass`,
+			`(DefStmt Decorators=((Decorator Expr=f)) Name=g Body=((BranchStmt Token=pass)))`},
+		{`@f()
+def g(): pass`,
+			`(DefStmt Decorators=((Decorator Expr=(CallExpr Fn=f))) Name=g Body=((BranchStmt Token=pass)))`},
+		{`@f(42)
+def g(): pass`,
+			`(DefStmt Decorators=((Decorator Expr=(CallExpr Fn=f Args=(42)))) Name=g Body=((BranchStmt Token=pass)))`},
 		{"f();g()",
 			`(ExprStmt X=(CallExpr Fn=f))`},
 		{"f();",
