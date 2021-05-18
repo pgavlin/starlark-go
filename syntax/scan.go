@@ -86,6 +86,7 @@ const (
 	LTLT_EQ       // <<=
 	GTGT_EQ       // >>=
 	STARSTAR      // **
+	AT            // @
 
 	// Keywords
 	AND
@@ -834,7 +835,7 @@ start:
 		}
 		panic("unreachable")
 
-	case ':', ';', '~': // single-char tokens (except comma)
+	case ':', ';', '~', '@': // single-char tokens (except comma)
 		sc.readRune()
 		switch c {
 		case ':':
@@ -843,6 +844,8 @@ start:
 			return SEMI
 		case '~':
 			return TILDE
+		case '@':
+			return AT
 		}
 		panic("unreachable")
 

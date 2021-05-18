@@ -116,20 +116,37 @@ func (x *AssignStmt) Span() (start, end Position) {
 	return
 }
 
+// A Decorator represents a function decorator. Used only within DefStmt.
+type Decorator struct {
+	commentsRef
+	At   Position
+	Expr Expr
+}
+
+func (x *Decorator) Span() (start, end Position) {
+	_, end = x.Expr.Span()
+	return x.At, end
+}
+
 // A DefStmt represents a function definition.
 type DefStmt struct {
 	commentsRef
-	Def    Position
-	Name   *Ident
-	Params []Expr // param = ident | ident=expr | * | *ident | **ident
-	Body   []Stmt
+	Decorators []*Decorator
+	Def        Position
+	Name       *Ident
+	Params     []Expr // param = ident | ident=expr | * | *ident | **ident
+	Body       []Stmt
 
 	Function interface{} // a *resolve.Function, set by resolver
 }
 
 func (x *DefStmt) Span() (start, end Position) {
+	start = x.Def
+	if len(x.Decorators) > 0 {
+		start, _ = x.Decorators[0].Span()
+	}
 	_, end = x.Body[len(x.Body)-1].Span()
-	return x.Def, end
+	return
 }
 
 // An ExprStmt is an expression evaluated for side effects.

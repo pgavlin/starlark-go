@@ -508,6 +508,10 @@ func (r *resolver) stmt(stmt syntax.Stmt) {
 		r.assign(stmt.LHS, isAugmented)
 
 	case *syntax.DefStmt:
+		for _, decorator := range stmt.Decorators {
+			r.expr(decorator.Expr)
+		}
+
 		r.bind(stmt.Name)
 		fn := &Function{
 			Name:   stmt.Name.Name,

@@ -6,7 +6,9 @@ File = {Statement | newline} eof .
 
 Statement = DefStmt | IfStmt | ForStmt | WhileStmt | SimpleStmt .
 
-DefStmt = 'def' identifier '(' [Parameters [',']] ')' ':' Suite .
+DefStmt = [Decorators] 'def' identifier '(' [Parameters [',']] ')' ':' Suite .
+
+Decorators = {'@' identifier [CallSuffix]}
 
 Parameters = Parameter {',' Parameter}.
 

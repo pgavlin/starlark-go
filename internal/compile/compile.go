@@ -1159,6 +1159,14 @@ func (fcomp *fcomp) stmt(stmt syntax.Stmt) {
 		fcomp.function(stmt.Function.(*resolve.Function))
 		fcomp.set(stmt.Name)
 
+		for _, decorator := range stmt.Decorators {
+			fcomp.call(&syntax.CallExpr{
+				Fn:   decorator.Expr,
+				Args: []syntax.Expr{stmt.Name},
+			})
+			fcomp.set(stmt.Name)
+		}
+
 	case *syntax.ForStmt:
 		// Keep consistent with ForClause.
 		head := fcomp.newBlock()
