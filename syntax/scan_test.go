@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"go/build"
 	"io/ioutil"
+	"os"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -286,6 +287,11 @@ pass`, "pass newline pass EOF"}, // consecutive newlines are consolidated
 // dataFile is the same as starlarktest.DataFile.
 // We make a copy to avoid a dependency cycle.
 var dataFile = func(pkgdir, filename string) string {
+	gomod := os.Getenv("GOMOD")
+	if gomod != "" {
+		return filepath.Join(filepath.Dir(gomod), pkgdir, filename)
+	}
+
 	return filepath.Join(build.Default.GOPATH, "src/go.starlark.net", pkgdir, filename)
 }
 

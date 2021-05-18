@@ -224,6 +224,26 @@ assert.fails(lambda: "{}}".format(1), "single '}' in format")
 assert.fails(lambda: "}}{".format(1), "unmatched '{' in format")
 assert.fails(lambda: "}{{".format(1), "single '}' in format")
 
+# interpolated strings
+def test_interpolate():
+	assert.eq(f"a{123}b", "a123b")
+	assert.eq(f"a{1}b{2}c{3}d{4}", "a1b2c3d4")
+	assert.eq(f"a{{b", "a{b")
+	assert.eq(f"a}}b", "a}b")
+	assert.eq(f"a{{b}}c", "a{b}c")
+
+	[x, y] = [1, 2]
+	assert.eq(f"a{x}b{y}c{1}", "a2b3c1")
+
+	assert.eq(f"a{"b"!s}c", "abc")
+	assert.eq(f"a{"b"!r}c", r'a"b"c')
+
+	x = "b"
+	assert.eq(f"a{x!r}c", r'a"b"c')
+
+	x = {"b": "b"}
+	assert.eq(f"a{x["b"]}c", "abc")
+
 # str.split, str.rsplit
 assert.eq("a.b.c.d".split("."), ["a", "b", "c", "d"])
 assert.eq("a.b.c.d".rsplit("."), ["a", "b", "c", "d"])

@@ -129,6 +129,20 @@ func (p *parser) nextToken() Position {
 	return oldpos
 }
 
+func (p *parser) nextTokenOrLiteralChars(end string) Position {
+	oldpos := p.tokval.pos
+	if !p.in.nextLiteralChars(&p.tokval, end) {
+		return p.nextToken()
+	}
+
+	p.tok = STRING
+	// enable to see the token stream
+	if debug {
+		log.Printf("nextLiteralChars: %-20s%+v\n", p.tok, p.tokval.pos)
+	}
+	return oldpos
+}
+
 // file_input = (NEWLINE | stmt)* EOF
 func (p *parser) parseFile() *File {
 	var stmts []Stmt
@@ -772,6 +786,7 @@ func (p *parser) parseArgs() []Expr {
 
 //  primary = IDENT
 //          | INT | FLOAT | STRING | BYTES
+//          | FSTRING_BEGIN ...          // interpolated string
 //          | '[' ...                    // list literal or comprehension
 //          | '{' ...                    // dict literal or comprehension
 //          | '(' ...                    // tuple or parenthesized expression
@@ -799,6 +814,9 @@ func (p *parser) parsePrimary() Expr {
 		raw := p.tokval.raw
 		pos := p.nextToken()
 		return &Literal{Token: tok, TokenPos: pos, Raw: raw, Value: val}
+
+	case FSTRING_BEGIN:
+		return p.parseFString()
 
 	case LBRACK:
 		return p.parseList()
@@ -833,6 +851,92 @@ func (p *parser) parsePrimary() Expr {
 	}
 	p.in.errorf(p.in.pos, "got %#v, want primary expression", p.tok)
 	panic("unreachable")
+}
+
+// fstring = FSTRING_BEGIN fstring_replacement {FSTRING_INTERIOR fstring_replacement} FSTRING_END
+func (p *parser) parseFString() *FStringExpr {
+	var parts []*FStringPart
+	parts = append(parts, p.parseFStringPart())
+
+	for {
+		switch p.tok {
+		case FSTRING_INTERIOR:
+			parts = append(parts, p.parseFStringPart())
+		case FSTRING_END:
+			tok, raw, val := p.tok, p.tokval.raw, p.tokval.string
+			pos := p.nextToken()
+			return &FStringExpr{
+				Parts: parts,
+				End:   &Literal{Token: tok, TokenPos: pos, Raw: raw, Value: val},
+			}
+		default:
+			p.in.errorf(p.in.pos, "got %#v, want }", p.tok)
+			panic("unreachable")
+		}
+	}
+}
+
+func (p *parser) parseFStringPart() *FStringPart {
+	// parse the literal portion of the part
+	tok, raw, val := p.tok, p.tokval.raw, p.tokval.string
+	pos := p.nextToken()
+	string := &Literal{Token: tok, TokenPos: pos, Raw: raw, Value: val}
+
+	// parse the replacement
+	return &FStringPart{
+		String:      string,
+		Replacement: p.parseFStringReplacement(),
+	}
+}
+
+// fstring_replacement = expr [':' literal_chars]
+func (p *parser) parseFStringReplacement() *FStringReplacement {
+	// parse the expression
+	expr := p.parseExpr(false)
+
+	// Check for a conversion
+	var conversion *FStringConversion
+	switch p.tok {
+	case CONVERSION_STR, CONVERSION_REPR:
+		kind := p.tok
+		pos := p.nextToken()
+		conversion = &FStringConversion{Kind: kind, Pos: pos}
+	}
+
+	// Check for a format specifier
+	var format *FStringFormat
+	if p.tok == COLON {
+		format = p.parseFStringFormat()
+	}
+
+	return &FStringReplacement{
+		Value:      expr,
+		Conversion: conversion,
+		Format:     format,
+	}
+}
+
+// fstring_format = ':' chars
+func (p *parser) parseFStringFormat() *FStringFormat {
+	colon := p.nextTokenOrLiteralChars("{}")
+
+	if p.tok != STRING {
+		p.in.errorf(p.in.pos, "got %#v, want any character but '{' or '}'", p.tok)
+	}
+
+	chars := p.tokval.raw
+	pos := p.nextToken()
+	lit := &Literal{
+		Token:    STRING,
+		TokenPos: pos,
+		Raw:      chars,
+		Value:    chars,
+	}
+
+	return &FStringFormat{
+		Colon: colon,
+		Value: lit,
+	}
 }
 
 // list = '[' ']'

@@ -147,5 +147,11 @@ var DataFile = func(pkgdir, filename string) string {
 		return filepath.Join(testSrcdir, "net_starlark_go", pkgdir, filename)
 	}
 
+	// Check for a module.
+	gomod := os.Getenv("GOMOD")
+	if gomod != "" {
+		return filepath.Join(filepath.Dir(gomod), pkgdir, filename)
+	}
+
 	return filepath.Join(build.Default.GOPATH, "src/go.starlark.net", pkgdir, filename)
 }

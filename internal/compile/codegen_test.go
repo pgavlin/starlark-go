@@ -72,6 +72,49 @@ func TestPlusFolding(t *testing.T) {
 	}
 }
 
+// TestStringInterpolate ensures that the compiler properly lowers string interpolations.
+func TestStringInterpolation(t *testing.T) {
+	isPredeclared := func(name string) bool { return name == "x" }
+	isUniversal := func(name string) bool { return false }
+	for i, test := range []struct {
+		src  string // source expression
+		want string // disassembled code
+	}{
+		{
+			`f"foo {x.bar} {x.baz}"`,
+			`constant "foo {} {}"; attr<0>; predeclared x; attr<2>; predeclared x; attr<3>; call<512>; return`,
+		},
+		{
+			`f"foo {x["bar"]} {x["baz"]}"`,
+			`constant "foo {} {}"; attr<0>; predeclared x; constant "bar"; index; predeclared x; constant "baz"; index; call<512>; return`,
+		},
+		{
+			`f"foo {x:x}"`,
+			`constant "foo {:x}"; attr<0>; predeclared x; call<256>; return`,
+		},
+		{
+			`f"foo {x!r:x}"`,
+			`constant "foo {!r:x}"; attr<0>; predeclared x; call<256>; return`,
+		},
+	} {
+		expr, err := syntax.ParseExpr("in.star", test.src, 0)
+		if err != nil {
+			t.Errorf("#%d: %v", i, err)
+			continue
+		}
+		locals, err := resolve.Expr(expr, isPredeclared, isUniversal)
+		if err != nil {
+			t.Errorf("#%d: %v", i, err)
+			continue
+		}
+		got := disassemble(Expr(expr, "<expr>", locals).Toplevel)
+		if test.want != got {
+			t.Errorf("expression <<%s>> generated <<%s>>, want <<%s>>",
+				test.src, got, test.want)
+		}
+	}
+}
+
 // disassemble is a trivial disassembler tailored to the accumulator test.
 func disassemble(f *Funcode) string {
 	out := new(bytes.Buffer)

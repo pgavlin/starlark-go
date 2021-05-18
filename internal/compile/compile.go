@@ -1296,6 +1296,9 @@ func (fcomp *fcomp) expr(e syntax.Expr) {
 		}
 		fcomp.emit1(CONSTANT, fcomp.pcomp.constantIndex(v))
 
+	case *syntax.FStringExpr:
+		fcomp.interpolate(e)
+
 	case *syntax.ListExpr:
 		for _, x := range e.List {
 			fcomp.expr(x)
@@ -1634,6 +1637,42 @@ func (fcomp *fcomp) binop(pos syntax.Position, op syntax.Token) {
 	default:
 		log.Panicf("%s: unexpected binary op: %s", pos, op)
 	}
+}
+
+func (fcomp *fcomp) interpolate(fstring *syntax.FStringExpr) {
+	// Lower string interpolation to a call to string.format.
+
+	// Accumulate the format string and call arguments.
+	var b strings.Builder
+	args := make([]syntax.Expr, len(fstring.Parts))
+	for i, p := range fstring.Parts {
+		b.WriteString(p.String.Value.(string))
+		b.WriteRune('{')
+		if p.Replacement.Conversion != nil {
+			switch p.Replacement.Conversion.Kind {
+			case syntax.CONVERSION_STR:
+				b.WriteString("!s")
+			case syntax.CONVERSION_REPR:
+				b.WriteString("!r")
+			}
+		}
+		if p.Replacement.Format != nil {
+			b.WriteRune(':')
+			b.WriteString(p.Replacement.Format.Value.Raw)
+		}
+		b.WriteRune('}')
+		args[i] = p.Replacement.Value
+	}
+	b.WriteString(fstring.End.Value.(string))
+
+	// Emit the call.
+	fcomp.call(&syntax.CallExpr{
+		Fn: &syntax.DotExpr{
+			X:    &syntax.Literal{Token: syntax.STRING, Value: b.String()},
+			Name: &syntax.Ident{Name: "format"},
+		},
+		Args: args,
+	})
 }
 
 func (fcomp *fcomp) call(call *syntax.CallExpr) {
