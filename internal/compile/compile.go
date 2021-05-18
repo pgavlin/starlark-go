@@ -1663,6 +1663,7 @@ func (fcomp *fcomp) interpolate(fstring *syntax.FStringExpr) {
 		b.WriteRune('}')
 		args[i] = p.Replacement.Value
 	}
+	b.WriteString(fstring.End.Value.(string))
 
 	// Emit the call.
 	fcomp.call(&syntax.CallExpr{
