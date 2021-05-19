@@ -69,6 +69,7 @@ type Function struct {
 	HasVarargs      bool       // whether params includes *args (convenience)
 	HasKwargs       bool       // whether params includes **kwargs (convenience)
 	NumKwonlyParams int        // number of keyword-only optional parameters
+	Globals         []*Binding // globals referenced by this function
 	Locals          []*Binding // this function's local/cell variables, parameters first
 	FreeVars        []*Binding // enclosing cells to capture in closure
 }

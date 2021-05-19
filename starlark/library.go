@@ -91,6 +91,12 @@ var (
 		"values":     NewBuiltin("values", dict_values),
 	}
 
+	functionMethods = map[string]*Builtin{
+		"code": NewBuiltin("code", function_code),
+		"env":  NewBuiltin("env", function_env),
+		"name": NewBuiltin("name", function_name),
+	}
+
 	listMethods = map[string]*Builtin{
 		"append": NewBuiltin("append", list_append),
 		"clear":  NewBuiltin("clear", list_clear),
@@ -1306,6 +1312,40 @@ func dict_values(_ *Thread, b *Builtin, args Tuple, kwargs []Tuple) (Value, erro
 		res[i] = item[1]
 	}
 	return NewList(res), nil
+}
+
+func function_code(_ *Thread, b *Builtin, args Tuple, kwargs []Tuple) (Value, error) {
+	if err := UnpackPositionalArgs(b.Name(), args, kwargs, 0); err != nil {
+		return nil, err
+	}
+	fn := b.Receiver().(*Function)
+	return Bytes(fn.Code()), nil
+}
+
+func function_env(_ *Thread, b *Builtin, args Tuple, kwargs []Tuple) (Value, error) {
+	if err := UnpackPositionalArgs(b.Name(), args, kwargs, 0); err != nil {
+		return nil, err
+	}
+	fn := b.Receiver().(*Function)
+	globals, defaults, locals := fn.Env()
+
+	tuple := func(elems []Tuple) Tuple {
+		res := make(Tuple, len(elems))
+		for i, v := range elems {
+			res[i] = v
+		}
+		return res
+	}
+
+	return Tuple{tuple(globals), tuple(defaults), tuple(locals)}, nil
+}
+
+func function_name(_ *Thread, b *Builtin, args Tuple, kwargs []Tuple) (Value, error) {
+	if err := UnpackPositionalArgs(b.Name(), args, kwargs, 0); err != nil {
+		return nil, err
+	}
+	fn := b.Receiver().(*Function)
+	return String(fn.Name()), nil
 }
 
 // https://github.com/google/starlark-go/blob/master/doc/spec.md#list·append
