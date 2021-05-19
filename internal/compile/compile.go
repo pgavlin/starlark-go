@@ -330,6 +330,7 @@ type Funcode struct {
 	Doc                   string          // docstring of this function
 	Code                  []byte          // the byte code
 	pclinetab             []uint16        // mapping from pc to linenum
+	Globals               []int           // indices of references globals
 	Locals                []Binding       // locals, parameters first
 	Cells                 []int           // indices of Locals that require cells
 	Freevars              []Binding       // for tracing
@@ -499,12 +500,17 @@ func File(stmts []syntax.Stmt, pos syntax.Position, name string, locals, globals
 		constants: make(map[interface{}]uint32),
 		functions: make(map[*Funcode]uint32),
 	}
-	pcomp.prog.Toplevel = pcomp.function(name, pos, stmts, locals, nil)
+	pcomp.prog.Toplevel = pcomp.function(name, pos, stmts, globals, locals, nil)
 
 	return pcomp.prog
 }
 
-func (pcomp *pcomp) function(name string, pos syntax.Position, stmts []syntax.Stmt, locals, freevars []*resolve.Binding) *Funcode {
+func (pcomp *pcomp) function(name string, pos syntax.Position, stmts []syntax.Stmt, globals, locals, freevars []*resolve.Binding) *Funcode {
+	globalIndices := make([]int, len(globals))
+	for i, binding := range globals {
+		globalIndices[i] = binding.Index
+	}
+
 	fcomp := &fcomp{
 		pcomp: pcomp,
 		pos:   pos,
@@ -513,6 +519,7 @@ func (pcomp *pcomp) function(name string, pos syntax.Position, stmts []syntax.St
 			Pos:      pos,
 			Name:     name,
 			Doc:      docStringFromBody(stmts),
+			Globals:  globalIndices,
 			Locals:   bindings(locals),
 			Freevars: bindings(freevars),
 		},
@@ -1885,7 +1892,7 @@ func (fcomp *fcomp) function(f *resolve.Function) {
 
 	fcomp.emit1(MAKETUPLE, uint32(ndefaults+len(f.FreeVars)))
 
-	funcode := fcomp.pcomp.function(f.Name, f.Pos, f.Body, f.Locals, f.FreeVars)
+	funcode := fcomp.pcomp.function(f.Name, f.Pos, f.Body, f.Globals, f.Locals, f.FreeVars)
 
 	if debug {
 		// TODO(adonovan): do compilations sequentially not as a tree,

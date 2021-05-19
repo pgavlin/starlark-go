@@ -32,6 +32,7 @@
 //      Mapping         -- value maps from keys to values, like a dictionary
 //      HasBinary       -- value defines binary operations such as * and +
 //      HasAttrs        -- value has readable fields or methods x.f
+//      HasEnv          -- value has a lexical environment like a function
 //      HasSetField     -- value has settable fields x.f
 //      HasSetIndex     -- value supports element update using x[i]=y
 //      HasSetKey       -- value supports map update using x[k]=v
@@ -127,7 +128,7 @@ type Comparable interface {
 	// < 1.
 	//
 	// Client code should not call this method.  Instead, use the
-	// standalone Compare or Equals functions, which are defined for
+	// standalone Compare orvEquals functions, which are defined for
 	// all pairs of operands.
 	CompareSameType(op syntax.Token, y Value, depth int) (bool, error)
 }
@@ -323,7 +324,14 @@ var (
 	_ HasAttrs = new(List)
 	_ HasAttrs = new(Dict)
 	_ HasAttrs = new(Set)
+	_ HasAttrs = new(Function)
 )
+
+// A HasEnv value is a callable value with an associated lexical environment.
+type HasEnv interface {
+	Callable
+	Env() (globals, defaults, freevars []Tuple)
+}
 
 // A HasSetField value has fields that may be written by a dot expression (x.f = y).
 //
@@ -692,9 +700,48 @@ func (fn *Function) String() string        { return toString(fn) }
 func (fn *Function) Type() string          { return "function" }
 func (fn *Function) Truth() Bool           { return true }
 
+func (fn *Function) Attr(name string) (Value, error) { return builtinAttr(fn, name, functionMethods) }
+func (fn *Function) AttrNames() []string             { return builtinAttrNames(functionMethods) }
+
 // Globals returns a new, unfrozen StringDict containing all global
 // variables so far defined in the function's module.
 func (fn *Function) Globals() StringDict { return fn.module.makeGlobalDict() }
+
+// Env returns the function's lexical environment.
+func (fn *Function) Env() (globals, defaults, freevars []Tuple) {
+	// Globals
+	globals = make([]Tuple, 0, len(fn.funcode.Globals))
+	for _, index := range fn.funcode.Globals {
+		if v := fn.module.globals[index]; v != nil {
+			id := fn.module.program.Globals[index]
+			globals = append(globals, Tuple{String(id.Name), v})
+		}
+	}
+
+	// Default parameter values
+	nparams := fn.NumParams()
+	params := fn.funcode.Locals[nparams-len(fn.defaults):]
+	defaults = make([]Tuple, len(fn.defaults))
+	for i, v := range fn.defaults {
+		defaults[i] = Tuple{String(params[i].Name), v}
+	}
+
+	// Free variables
+	freevars = make([]Tuple, len(fn.freevars))
+	for i, v := range fn.freevars {
+		if cell, ok := v.(*cell); ok {
+			v = cell.v
+		}
+		freevars[i] = Tuple{String(fn.funcode.Freevars[i].Name), v}
+	}
+
+	return
+}
+
+// Code returns the functions bytecode. Callers must not modify the slice data.
+func (fn *Function) Code() []byte {
+	return fn.funcode.Code
+}
 
 func (fn *Function) Position() syntax.Position { return fn.funcode.Pos }
 func (fn *Function) NumParams() int            { return fn.funcode.NumParams }
@@ -716,9 +763,12 @@ func (fn *Function) HasKwargs() bool  { return fn.funcode.HasKwargs }
 
 // A Builtin is a function implemented in Go.
 type Builtin struct {
-	name string
-	fn   func(thread *Thread, fn *Builtin, args Tuple, kwargs []Tuple) (Value, error)
-	recv Value // for bound methods (e.g. "".startswith)
+	name     string
+	fn       func(thread *Thread, fn *Builtin, args Tuple, kwargs []Tuple) (Value, error)
+	globals  []Tuple
+	defaults []Tuple
+	freevars []Tuple
+	recv     Value // for bound methods (e.g. "".startswith)
 }
 
 func (b *Builtin) Name() string { return b.name }
@@ -742,10 +792,28 @@ func (b *Builtin) CallInternal(thread *Thread, args Tuple, kwargs []Tuple) (Valu
 }
 func (b *Builtin) Truth() Bool { return true }
 
+func (b *Builtin) Attr(name string) (Value, error) { return builtinAttr(b, name, functionMethods) }
+func (b *Builtin) AttrNames() []string             { return builtinAttrNames(functionMethods) }
+
+func (b *Builtin) Env() (globals, defaults, freevars []Tuple) {
+	return b.globals, b.defaults, b.freevars
+}
+
 // NewBuiltin returns a new 'builtin_function_or_method' value with the specified name
 // and implementation.  It compares unequal with all other values.
 func NewBuiltin(name string, fn func(thread *Thread, fn *Builtin, args Tuple, kwargs []Tuple) (Value, error)) *Builtin {
 	return &Builtin{name: name, fn: fn}
+}
+
+// BindEnv returns a new Builtin value bound to the given environment.
+func (b *Builtin) BindEnv(globals, defaults, freevars []Tuple) *Builtin {
+	return &Builtin{
+		name:     b.name,
+		fn:       b.fn,
+		globals:  globals,
+		defaults: defaults,
+		freevars: freevars,
+	}
 }
 
 // BindReceiver returns a new Builtin value representing a method

@@ -952,24 +952,29 @@ func (r *resolver) lookupLexical(use use, env *block) (bind *Binding) {
 	if !ok {
 		// Defined in parent block?
 		bind = r.lookupLexical(use, env.parent)
-		if env.function != nil && (bind.Scope == Local || bind.Scope == Free || bind.Scope == Cell) {
-			// Found in parent block, which belongs to enclosing function.
-			// Add the parent's binding to the function's freevars,
-			// and add a new 'free' binding to the inner function's block,
-			// and turn the parent's local into cell.
-			if bind.Scope == Local {
-				bind.Scope = Cell
-			}
-			index := len(env.function.FreeVars)
-			env.function.FreeVars = append(env.function.FreeVars, bind)
-			bind = &Binding{
-				First: bind.First,
-				Scope: Free,
-				Index: index,
-			}
-			if debug {
-				fmt.Printf("creating freevar %v in function at %s: %s\n",
-					len(env.function.FreeVars), env.function.Pos, use.id.Name)
+		if env.function != nil {
+			switch bind.Scope {
+			case Local, Free, Cell:
+				// Found in parent block, which belongs to enclosing function.
+				// Add the parent's binding to the function's freevars,
+				// and add a new 'free' binding to the inner function's block,
+				// and turn the parent's local into cell.
+				if bind.Scope == Local {
+					bind.Scope = Cell
+				}
+				index := len(env.function.FreeVars)
+				env.function.FreeVars = append(env.function.FreeVars, bind)
+				bind = &Binding{
+					First: bind.First,
+					Scope: Free,
+					Index: index,
+				}
+				if debug {
+					fmt.Printf("creating freevar %v in function at %s: %s\n",
+						len(env.function.FreeVars), env.function.Pos, use.id.Name)
+				}
+			case Global:
+				env.function.Globals = append(env.function.Globals, bind)
 			}
 		}
 
