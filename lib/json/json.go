@@ -73,9 +73,10 @@ import (
 var Module = &starlarkstruct.Module{
 	Name: "json",
 	Members: starlark.StringDict{
-		"encode": starlark.NewBuiltin("json.encode", encode),
-		"decode": starlark.NewBuiltin("json.decode", decode),
-		"indent": starlark.NewBuiltin("json.indent", indent),
+		"encode":     starlark.NewBuiltin("json.encode", encode),
+		"decode":     starlark.NewBuiltin("json.decode", decode),
+		"decode_all": starlark.NewBuiltin("json.decode_all", decodeAll),
+		"indent":     starlark.NewBuiltin("json.indent", indent),
 	},
 }
 
@@ -252,6 +253,31 @@ func decode(thread *starlark.Thread, b *starlark.Builtin, args starlark.Tuple, k
 		return nil, err
 	}
 
+	x, _, err := decodeOne(s, true)
+	return x, err
+}
+
+func decodeAll(thread *starlark.Thread, b *starlark.Builtin, args starlark.Tuple, kwargs []starlark.Tuple) (_ starlark.Value, err error) {
+	var s string
+	if err := starlark.UnpackPositionalArgs(b.Name(), args, kwargs, 1, &s); err != nil {
+		return nil, err
+	}
+
+	list := starlark.NewList(nil)
+	for {
+		x, rest, err := decodeOne(s, false)
+		switch {
+		case err != nil:
+			return nil, err
+		case x == nil:
+			return list, nil
+		}
+		list.Append(x)
+		s = rest
+	}
+}
+
+func decodeOne(s string, only bool) (_ starlark.Value, _ string, err error) {
 	// The decoder necessarily makes certain representation choices
 	// such as list vs tuple, struct vs dict, int vs float.
 	// In principle, we could parameterize it to allow the caller to
@@ -274,6 +300,13 @@ func decode(thread *starlark.Thread, b *starlark.Builtin, args starlark.Tuple, k
 			}
 		}
 		return false
+	}
+
+	if !skipSpace() {
+		if only {
+			return nil, "", fmt.Errorf("json.decode: at offset %d, unexpected end of file", i)
+		}
+		return nil, "", nil
 	}
 
 	// next consumes leading spaces and returns the first non-space.
@@ -467,10 +500,10 @@ func decode(thread *starlark.Thread, b *starlark.Builtin, args starlark.Tuple, k
 		}
 	}()
 	x := parse()
-	if skipSpace() {
+	if skipSpace() && only {
 		fail("unexpected character %q after value", s[i])
 	}
-	return x, nil
+	return x, s[i:], nil
 }
 
 func isdigit(b byte) bool {
