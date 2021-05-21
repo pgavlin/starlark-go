@@ -330,7 +330,7 @@ var (
 // A HasEnv value is a callable value with an associated lexical environment.
 type HasEnv interface {
 	Callable
-	Env() (globals, defaults, freevars []Tuple)
+	Env() (globals, defaults, freevars Tuple)
 }
 
 // A HasSetField value has fields that may be written by a dot expression (x.f = y).
@@ -708,9 +708,9 @@ func (fn *Function) AttrNames() []string             { return builtinAttrNames(f
 func (fn *Function) Globals() StringDict { return fn.module.makeGlobalDict() }
 
 // Env returns the function's lexical environment.
-func (fn *Function) Env() (globals, defaults, freevars []Tuple) {
+func (fn *Function) Env() (globals, defaults, freevars Tuple) {
 	// Globals
-	globals = make([]Tuple, 0, len(fn.funcode.Globals))
+	globals = make(Tuple, 0, len(fn.funcode.Globals))
 	for _, index := range fn.funcode.Globals {
 		if v := fn.module.globals[index]; v != nil {
 			id := fn.module.program.Globals[index]
@@ -721,13 +721,13 @@ func (fn *Function) Env() (globals, defaults, freevars []Tuple) {
 	// Default parameter values
 	nparams := fn.NumParams()
 	params := fn.funcode.Locals[nparams-len(fn.defaults):]
-	defaults = make([]Tuple, len(fn.defaults))
+	defaults = make(Tuple, len(fn.defaults))
 	for i, v := range fn.defaults {
 		defaults[i] = Tuple{String(params[i].Name), v}
 	}
 
 	// Free variables
-	freevars = make([]Tuple, len(fn.freevars))
+	freevars = make(Tuple, len(fn.freevars))
 	for i, v := range fn.freevars {
 		if cell, ok := v.(*cell); ok {
 			v = cell.v
@@ -765,9 +765,9 @@ func (fn *Function) HasKwargs() bool  { return fn.funcode.HasKwargs }
 type Builtin struct {
 	name     string
 	fn       func(thread *Thread, fn *Builtin, args Tuple, kwargs []Tuple) (Value, error)
-	globals  []Tuple
-	defaults []Tuple
-	freevars []Tuple
+	globals  Tuple
+	defaults Tuple
+	freevars Tuple
 	recv     Value // for bound methods (e.g. "".startswith)
 }
 
@@ -795,7 +795,7 @@ func (b *Builtin) Truth() Bool { return true }
 func (b *Builtin) Attr(name string) (Value, error) { return builtinAttr(b, name, functionMethods) }
 func (b *Builtin) AttrNames() []string             { return builtinAttrNames(functionMethods) }
 
-func (b *Builtin) Env() (globals, defaults, freevars []Tuple) {
+func (b *Builtin) Env() (globals, defaults, freevars Tuple) {
 	return b.globals, b.defaults, b.freevars
 }
 
@@ -806,7 +806,7 @@ func NewBuiltin(name string, fn func(thread *Thread, fn *Builtin, args Tuple, kw
 }
 
 // BindEnv returns a new Builtin value bound to the given environment.
-func (b *Builtin) BindEnv(globals, defaults, freevars []Tuple) *Builtin {
+func (b *Builtin) BindEnv(globals, defaults, freevars Tuple) *Builtin {
 	return &Builtin{
 		name:     b.name,
 		fn:       b.fn,

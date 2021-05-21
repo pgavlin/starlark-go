@@ -1328,16 +1328,7 @@ func function_env(_ *Thread, b *Builtin, args Tuple, kwargs []Tuple) (Value, err
 	}
 	fn := b.Receiver().(*Function)
 	globals, defaults, locals := fn.Env()
-
-	tuple := func(elems []Tuple) Tuple {
-		res := make(Tuple, len(elems))
-		for i, v := range elems {
-			res[i] = v
-		}
-		return res
-	}
-
-	return Tuple{tuple(globals), tuple(defaults), tuple(locals)}, nil
+	return Tuple{globals, defaults, locals}, nil
 }
 
 func function_name(_ *Thread, b *Builtin, args Tuple, kwargs []Tuple) (Value, error) {
