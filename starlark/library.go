@@ -138,6 +138,7 @@ var (
 	}
 
 	setMethods = map[string]*Builtin{
+		"add":   NewBuiltin("add", set_add),
 		"union": NewBuiltin("union", set_union),
 	}
 )
@@ -2148,6 +2149,15 @@ func string_splitlines(_ *Thread, b *Builtin, args Tuple, kwargs []Tuple) (Value
 		list[i] = String(x)
 	}
 	return NewList(list), nil
+}
+
+func set_add(_ *Thread, b *Builtin, args Tuple, kwargs []Tuple) (Value, error) {
+	var x Value
+	if err := UnpackPositionalArgs(b.Name(), args, kwargs, 0, &x); err != nil {
+		return nil, err
+	}
+	b.Receiver().(*Set).Insert(x)
+	return None, nil
 }
 
 // https://github.com/google/starlark-go/blob/master/doc/spec.md#set·union.
