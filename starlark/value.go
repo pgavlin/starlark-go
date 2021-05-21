@@ -32,6 +32,7 @@
 //      Mapping         -- value maps from keys to values, like a dictionary
 //      HasBinary       -- value defines binary operations such as * and +
 //      HasAttrs        -- value has readable fields or methods x.f
+//      HasDoc          -- value has a name and a doc string
 //      HasEnv          -- value has a lexical environment like a function
 //      HasSetField     -- value has settable fields x.f
 //      HasSetIndex     -- value supports element update using x[i]=y
@@ -342,6 +343,18 @@ type HasSetField interface {
 	HasAttrs
 	SetField(name string, val Value) error
 }
+
+// A HasDoc value has a docstring that may be read using the help() builtin.
+type HasDoc interface {
+	Value
+	Name() string
+	Doc() string
+}
+
+var (
+	_ HasDoc = (*Builtin)(nil)
+	_ HasDoc = (*Function)(nil)
+)
 
 // A NoSuchAttrError may be returned by an implementation of
 // HasAttrs.Attr or HasSetField.SetField to indicate that no such field
@@ -764,6 +777,7 @@ func (fn *Function) HasKwargs() bool  { return fn.funcode.HasKwargs }
 // A Builtin is a function implemented in Go.
 type Builtin struct {
 	name     string
+	doc      string
 	fn       func(thread *Thread, fn *Builtin, args Tuple, kwargs []Tuple) (Value, error)
 	globals  Tuple
 	defaults Tuple
@@ -772,6 +786,7 @@ type Builtin struct {
 }
 
 func (b *Builtin) Name() string { return b.name }
+func (b *Builtin) Doc() string  { return b.doc }
 func (b *Builtin) Freeze() {
 	if b.recv != nil {
 		b.recv.Freeze()
@@ -803,6 +818,12 @@ func (b *Builtin) Env() (globals, defaults, freevars Tuple) {
 // and implementation.  It compares unequal with all other values.
 func NewBuiltin(name string, fn func(thread *Thread, fn *Builtin, args Tuple, kwargs []Tuple) (Value, error)) *Builtin {
 	return &Builtin{name: name, fn: fn}
+}
+
+// WithDoc sets the docstring for the builtin.
+func (b *Builtin) WithDoc(doc string) *Builtin {
+	b.doc = doc
+	return b
 }
 
 // BindEnv returns a new Builtin value bound to the given environment.
