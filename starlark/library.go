@@ -53,6 +53,7 @@ func init() {
 		"getattr":   NewBuiltin("getattr", getattr),
 		"hasattr":   NewBuiltin("hasattr", hasattr),
 		"hash":      NewBuiltin("hash", hash),
+		"help":      NewBuiltin("help", help).WithDoc(helpDoc),
 		"int":       NewBuiltin("int", int_),
 		"len":       NewBuiltin("len", len_),
 		"list":      NewBuiltin("list", list),
@@ -2268,4 +2269,82 @@ func updateDict(dict *Dict, updates Tuple, kwargs []Tuple) error {
 // where name is b.Name() and msg is a string or error.
 func nameErr(b *Builtin, msg interface{}) error {
 	return fmt.Errorf("%s: %v", b.Name(), msg)
+}
+
+const helpDoc = `Display docs for the given object.`
+
+func help(thread *Thread, b *Builtin, args Tuple, kwargs []Tuple) (Value, error) {
+	var object Value
+	if err := UnpackPositionalArgs(b.Name(), args, kwargs, 1, &object); err != nil {
+		return nil, err
+	}
+
+	var buf strings.Builder
+	printf := func(f string, args ...interface{}) {
+		fmt.Fprintf(&buf, f, args...)
+	}
+	defer func() {
+		if thread.Print != nil {
+			thread.Print(thread, buf.String())
+		} else {
+			fmt.Fprintln(os.Stderr, buf.String())
+		}
+	}()
+
+	doc, ok := object.(HasDoc)
+	if !ok {
+		printf("no help available")
+
+		return None, nil
+	}
+
+	printf("Help on %s %s:\n\n", object.Type(), doc.Name())
+
+	// If the object is a function, print its signature.
+	if fn, ok := object.(*Function); ok {
+		printf("%s(", fn.Name())
+		n, firstDefault := fn.NumParams(), fn.NumParams()-len(fn.defaults)
+		for i := 0; i < n; i++ {
+			binding := fn.funcode.Locals[i]
+			if i > 0 {
+				printf(", ")
+			}
+			printf("%s", binding.Name)
+			if i >= firstDefault {
+				printf("=%v", fn.defaults[i-firstDefault])
+			}
+		}
+		printf(")\n")
+	}
+
+	docstring := doc.Doc()
+
+	trimpre := 0
+	for i := 0; i < len(docstring); i++ {
+		b := docstring[i]
+		if b >= 128 || !unicode.IsSpace(rune(b)) {
+			break
+		}
+		if b == '\n' {
+			trimpre = i + 1
+			break
+		}
+	}
+
+	trimpost := 0
+	for i := len(docstring); i > 0; i-- {
+		b := docstring[i-1]
+		if b >= 128 || !unicode.IsSpace(rune(b)) {
+			break
+		}
+		if b == '\n' {
+			trimpost = i - 1
+			break
+		}
+	}
+
+	docstring = strings.ReplaceAll(docstring[trimpre:trimpost], "\t", "    ")
+
+	printf("%s", docstring)
+	return None, nil
 }
