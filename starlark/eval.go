@@ -1051,7 +1051,7 @@ func Binary(op syntax.Token, x, y Value) (Value, error) {
 				if x.Len() > y.Len() {
 					x, y = y, x // opt: range over smaller set
 				}
-				for _, xelem := range x.elems() {
+				for _, xelem := range x.Elems() {
 					// Has, Insert cannot fail here.
 					if found, _ := y.Has(xelem); found {
 						set.Insert(xelem)
@@ -1070,12 +1070,12 @@ func Binary(op syntax.Token, x, y Value) (Value, error) {
 		case *Set: // symmetric difference
 			if y, ok := y.(*Set); ok {
 				set := new(Set)
-				for _, xelem := range x.elems() {
+				for _, xelem := range x.Elems() {
 					if found, _ := y.Has(xelem); !found {
 						set.Insert(xelem)
 					}
 				}
-				for _, yelem := range y.elems() {
+				for _, yelem := range y.Elems() {
 					if found, _ := x.Has(yelem); !found {
 						set.Insert(yelem)
 					}
