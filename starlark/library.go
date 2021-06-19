@@ -101,6 +101,7 @@ var (
 	listMethods = map[string]*Builtin{
 		"append": NewBuiltin("append", list_append),
 		"clear":  NewBuiltin("clear", list_clear),
+		"copy":   NewBuiltin("copy", list_copy),
 		"extend": NewBuiltin("extend", list_extend),
 		"index":  NewBuiltin("index", list_index),
 		"insert": NewBuiltin("insert", list_insert),
@@ -1364,6 +1365,16 @@ func list_clear(_ *Thread, b *Builtin, args Tuple, kwargs []Tuple) (Value, error
 		return nil, nameErr(b, err)
 	}
 	return None, nil
+}
+
+func list_copy(_ *Thread, b *Builtin, args Tuple, kwargs []Tuple) (Value, error) {
+	if err := UnpackPositionalArgs(b.Name(), args, kwargs, 0); err != nil {
+		return nil, err
+	}
+	list := b.Receiver().(*List)
+	newElems := make([]Value, len(list.elems))
+	copy(newElems, list.elems)
+	return NewList(newElems), nil
 }
 
 // https://github.com/google/starlark-go/blob/master/doc/spec.md#list·extend
