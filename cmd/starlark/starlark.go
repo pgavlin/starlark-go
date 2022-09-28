@@ -22,6 +22,7 @@ import (
 	"go.starlark.net/repl"
 	"go.starlark.net/resolve"
 	"go.starlark.net/starlark"
+	"golang.org/x/term"
 )
 
 // flags
@@ -37,11 +38,13 @@ func init() {
 	flag.BoolVar(&compile.Disassemble, "disassemble", compile.Disassemble, "show disassembly during compilation of each function")
 
 	// non-standard dialect flags
-	flag.BoolVar(&resolve.AllowFloat, "float", resolve.AllowFloat, "obsolete; no effect")
 	flag.BoolVar(&resolve.AllowSet, "set", resolve.AllowSet, "allow set data type")
-	flag.BoolVar(&resolve.AllowLambda, "lambda", resolve.AllowLambda, "allow lambda expressions")
 	flag.BoolVar(&resolve.AllowRecursion, "recursion", resolve.AllowRecursion, "allow while statements and recursive functions")
 	flag.BoolVar(&resolve.AllowGlobalReassign, "globalreassign", resolve.AllowGlobalReassign, "allow reassignment of globals, and if/for/while statements at top level")
+
+	// flags that are now standard
+	flag.BoolVar(&resolve.AllowFloat, "float", resolve.AllowFloat, "obsolete; no effect")
+	flag.BoolVar(&resolve.AllowLambda, "lambda", resolve.AllowLambda, "obsolete; no effect")
 }
 
 func main() {
@@ -118,9 +121,15 @@ func doMain() int {
 			return 1
 		}
 	case flag.NArg() == 0:
-		fmt.Println("Welcome to Starlark (go.starlark.net)")
+		stdinIsTerminal := term.IsTerminal(int(os.Stdin.Fd()))
+		if stdinIsTerminal {
+			fmt.Println("Welcome to Starlark (go.starlark.net)")
+		}
 		thread.Name = "REPL"
 		repl.REPL(thread, globals)
+		if stdinIsTerminal {
+			fmt.Println()
+		}
 	default:
 		log.Print("want at most one Starlark file name")
 		return 1

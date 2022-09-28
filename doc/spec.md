@@ -6,12 +6,12 @@ application, and this application may define additional
 domain-specific functions and data types beyond those provided by the
 core language.  For example, Starlark is embedded within (and was
 originally developed for) the [Bazel build tool](https://bazel.build),
-and [Bazel's build language](https://docs.bazel.build/versions/master/starlark/language.html) is based on Starlark.
+and [Bazel's build language](https://docs.bazel.build/versions/main/skylark/language.html) is based on Starlark.
 
 This document describes the Go implementation of Starlark
 at go.starlark.net/starlark.
 The language it defines is similar but not identical to
-[the Java-based implementation](https://github.com/bazelbuild/bazel/blob/master/src/main/java/com/google/devtools/starlark/Starlark.java)
+[the Java-based implementation](https://github.com/bazelbuild/bazel/blob/master/src/main/java/net/starlark/java/eval/Starlark.java)
 used by Bazel.
 We identify places where their behaviors differ, and an
 [appendix](#dialect-differences) provides a summary of those
@@ -175,6 +175,8 @@ reproducibility is paramount, such as build tools.
     * [string·lower](#string·lower)
     * [string·lstrip](#string·lstrip)
     * [string·partition](#string·partition)
+    * [string·removeprefix](#string·removeprefix)
+    * [string·removesuffix](#string·removesuffix)
     * [string·replace](#string·replace)
     * [string·rfind](#string·rfind)
     * [string·rindex](#string·rindex)
@@ -680,6 +682,8 @@ Strings have several built-in methods:
 * [`lstrip`](#string·lstrip)
 * [`partition`](#string·partition)
 * [`replace`](#string·replace)
+* [`removeprefix`](#string·removeprefix)
+* [`removesuffix`](#string·removesuffix)
 * [`rfind`](#string·rfind)
 * [`rindex`](#string·rindex)
 * [`rpartition`](#string·rpartition)
@@ -901,6 +905,20 @@ fail.
 
 A dictionary used in a Boolean context is considered true if it is
 non-empty.
+
+The binary `|` operation may be applied to two dictionaries.
+It yields a new dictionary whose set of keys is the union of the sets
+of keys of the two operands. The corresponding values are taken from
+the operands, where the value taken from the right operand takes
+precedence if both contain a given key.  Iterating over the keys in
+the resulting dictionary first yields all keys in the left operand in
+insertion order, then all keys in the right operand that were not
+present in the left operand, again in insertion order.
+
+There is also an augmented assignment version of the `|` operation.
+For two dictionaries `x` and `y`, the statement `x |= y` behaves
+similar to `x = x | y`, but updates `x` in place rather than assigning
+a new dictionary to it.
 
 Dictionaries may be compared for equality using `==` and `!=`.  Two
 dictionaries compare equal if they contain the same number of items
@@ -2014,6 +2032,9 @@ Sets
       int & int                 # bitwise intersection (AND)
       set & set                 # set intersection
       set ^ set                 # set symmetric difference
+
+Dict
+      dict | dict               # ordered union
 ```
 
 The operands of the arithmetic operators `+`, `-`, `*`, `//`, and
@@ -2052,10 +2073,14 @@ For sets, it yields a new set containing the intersection of the
 elements of the operand sets, preserving the element order of the left
 operand.
 
-The `|` operator likewise computes bitwise or set unions.
+The `|` operator likewise computes bitwise, set, or dict unions.
 The result of `set | set` is a new set whose elements are the
 union of the operands, preserving the order of the elements of the
 operands, left before right.
+Similarly, the result of `dict | dict` is a new dict whose entries are
+the union of the operands, preserving the order in which keys first
+appear, but using the value from the right operand for each key
+common to both dicts.
 
 The `^` operator accepts operands of either `int` or `set` type.
 For integers, it yields the bitwise XOR (exclusive OR) of its operands.
@@ -2578,7 +2603,7 @@ m.f = ""
 
 Compound targets may consist of a comma-separated list of
 subtargets, optionally surrounded by parentheses or square brackets,
-and targets may be nested arbitarily in this way.
+and targets may be nested arbitrarily in this way.
 An assignment to a compound target checks that the right-hand value is a
 sequence with the same number of elements as the target.
 Each element of the sequence is then assigned to the corresponding
@@ -3193,7 +3218,7 @@ specified base, decimal by default.
 If `base` is zero, x is interpreted like an integer literal, the base
 being inferred from an optional base prefix such as `0b`, `0o`, or
 `0x` preceding the first digit.
-When the `base` is provided explictly, a matching base prefix is
+When the `base` is provided explicitly, a matching base prefix is
 also permitted, and has no effect.
 Irrespective of base, the string may start with an optional `+` or `-`
 sign indicating the sign of the result.
@@ -4024,6 +4049,30 @@ If S does not contain `x`, `partition` returns `(S, "", "")`.
 
 ```python
 "one/two/three".partition("/")		# ("one", "/", "two/three")
+```
+
+<a id='string·removeprefix'></a>
+### string·removeprefix
+
+`S.removeprefix(prefix)` returns a copy of string S with the prefix `prefix`
+removed if S starts with `prefix`, otherwise it returns S.
+
+```python
+"banana".removeprefix("ban")          # "ana"
+"banana".removeprefix("foo")          # "banana"
+"foofoobar".removeprefix("foo")       # "foobar"
+```
+
+<a id='string·removesuffix'></a>
+### string·removesuffix
+
+`S.removesuffix(suffix)` returns a copy of string S with the suffix `suffix`
+removed if S ends with `suffix`, otherwise it returns S.
+
+```python
+"banana".removesuffix("nana")         # "ba"
+"banana".removesuffix("foo")          # "banana"
+"banana".removesuffix("na")           # "bana"
 ```
 
 <a id='string·replace'></a>
