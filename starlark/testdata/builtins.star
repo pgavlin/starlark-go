@@ -178,7 +178,7 @@ z1.append(3)
 assert.eq(dir(None), [])
 assert.eq(dir({})[:3], ["clear", "get", "items"]) # etc
 assert.eq(dir(1), [])
-assert.eq(dir([])[:3], ["append", "clear", "extend"]) # etc
+assert.eq(dir([])[:3], ["append", "clear", "copy"]) # etc
 
 # hasattr, getattr, dir
 # hasfields is an application-defined type defined in eval_test.go.
@@ -196,7 +196,7 @@ assert.eq(getattr(hf, "x"), 2)
 assert.eq(hf.x, 2)
 # built-in types can have attributes (methods) too.
 myset = set([])
-assert.eq(dir(myset), ["union"])
+assert.eq(dir(myset), ["add", "union"])
 assert.true(hasattr(myset, "union"))
 assert.true(not hasattr(myset, "onion"))
 assert.eq(str(getattr(myset, "union")), "<built-in method union of set value>")
