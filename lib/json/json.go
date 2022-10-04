@@ -9,6 +9,7 @@ package json // import "go.starlark.net/lib/json"
 
 import (
 	"bytes"
+	"encoding/base64"
 	"encoding/json"
 	"fmt"
 	"log"
@@ -134,6 +135,9 @@ func encode(thread *starlark.Thread, b *starlark.Builtin, args starlark.Tuple, k
 
 		case starlark.String:
 			quote(string(x))
+
+		case starlark.Bytes:
+			quote(base64.StdEncoding.EncodeToString([]byte(x)))
 
 		case starlark.Callable:
 			quote(x.String())

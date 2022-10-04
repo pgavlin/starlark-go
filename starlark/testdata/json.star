@@ -24,6 +24,7 @@ assert.eq(json.encode(dict(x = 1, y = "two")), '{"x":1,"y":"two"}')
 assert.eq(json.encode(dict(y = "two", x = 1)), '{"x":1,"y":"two"}') # key, not insertion, order
 assert.eq(json.encode(struct(x = 1, y = "two")), '{"x":1,"y":"two"}')  # a user-defined HasAttrs
 assert.eq(json.encode("😹"[:1]), '"\\ufffd"') # invalid UTF-8 -> replacement char
+assert.eq(json.encode(bytes("hello")), '"aGVsbG8="')
 
 def encode_error(expr, error):
     assert.fails(lambda: json.encode(expr), error)
