@@ -135,6 +135,9 @@ func encode(thread *starlark.Thread, b *starlark.Builtin, args starlark.Tuple, k
 		case starlark.String:
 			quote(string(x))
 
+		case starlark.Callable:
+			quote(x.String())
+
 		case starlark.IterableMapping:
 			// e.g. dict (must have string keys)
 			buf.WriteByte('{')
@@ -187,9 +190,16 @@ func encode(thread *starlark.Thread, b *starlark.Builtin, args starlark.Tuple, k
 				if err != nil || v == nil {
 					log.Fatalf("internal error: dir(%s) includes %q but value has no .%s field", x.Type(), name, name)
 				}
+
+				// Ignore methods.
+				if _, isCallable := v.(starlark.Callable); isCallable {
+					continue
+				}
+
 				if i > 0 {
 					buf.WriteByte(',')
 				}
+
 				quote(name)
 				buf.WriteByte(':')
 				if err := emit(v); err != nil {

@@ -3,7 +3,7 @@
 load("assert.star", "assert")
 load("json.star", "json")
 
-assert.eq(dir(json), ["decode", "encode", "indent"])
+assert.eq(dir(json), ["decode", "decode_all", "encode", "indent"])
 
 # Some of these cases were inspired by github.com/nst/JSONTestSuite.
 
@@ -30,11 +30,6 @@ def encode_error(expr, error):
 
 encode_error(float("NaN"), "json.encode: cannot encode non-finite float nan")
 encode_error({1: "two"}, "dict has int key, want string")
-encode_error(len, "cannot encode builtin_function_or_method as JSON")
-encode_error(struct(x=[1, {"x": len}]), # nested failure
-             'in field .x: at list index 1: in dict key "x": cannot encode...')
-encode_error(struct(x=[1, {"x": len}]), # nested failure
-             'in field .x: at list index 1: in dict key "x": cannot encode...')
 encode_error({1: 2}, 'dict has int key, want string')
 
 ## json.decode
