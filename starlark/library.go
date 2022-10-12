@@ -92,6 +92,12 @@ var (
 		"values":     NewBuiltin("values", dict_values),
 	}
 
+	functionCodeMethods = map[string]*Builtin{
+		"bytecode":   NewBuiltin("bytecode", function_code_bytecode),
+		"module_env": NewBuiltin("env", function_code_module_env),
+		"name":       NewBuiltin("name", function_name),
+	}
+
 	functionMethods = map[string]*Builtin{
 		"code": NewBuiltin("code", function_code),
 		"env":  NewBuiltin("env", function_env),
@@ -1319,12 +1325,29 @@ func dict_values(_ *Thread, b *Builtin, args Tuple, kwargs []Tuple) (Value, erro
 	return NewList(res), nil
 }
 
+func function_code_bytecode(_ *Thread, b *Builtin, args Tuple, kwargs []Tuple) (Value, error) {
+	if err := UnpackPositionalArgs(b.Name(), args, kwargs, 0); err != nil {
+		return nil, err
+	}
+	fc := b.Receiver().(*FunctionCode)
+	return Bytes(fc.Bytecode()), nil
+}
+
+func function_code_module_env(_ *Thread, b *Builtin, args Tuple, kwargs []Tuple) (Value, error) {
+	if err := UnpackPositionalArgs(b.Name(), args, kwargs, 0); err != nil {
+		return nil, err
+	}
+	fc := b.Receiver().(*FunctionCode)
+	module, globals := fc.ModuleEnv()
+	return Tuple{module, globals}, nil
+}
+
 func function_code(_ *Thread, b *Builtin, args Tuple, kwargs []Tuple) (Value, error) {
 	if err := UnpackPositionalArgs(b.Name(), args, kwargs, 0); err != nil {
 		return nil, err
 	}
 	fn := b.Receiver().(*Function)
-	return Bytes(fn.Code()), nil
+	return fn.Code(), nil
 }
 
 func function_env(_ *Thread, b *Builtin, args Tuple, kwargs []Tuple) (Value, error) {
@@ -1332,15 +1355,15 @@ func function_env(_ *Thread, b *Builtin, args Tuple, kwargs []Tuple) (Value, err
 		return nil, err
 	}
 	fn := b.Receiver().(*Function)
-	globals, defaults, locals := fn.Env()
-	return Tuple{globals, defaults, locals}, nil
+	defaults, locals := fn.Env()
+	return Tuple{defaults, locals}, nil
 }
 
 func function_name(_ *Thread, b *Builtin, args Tuple, kwargs []Tuple) (Value, error) {
 	if err := UnpackPositionalArgs(b.Name(), args, kwargs, 0); err != nil {
 		return nil, err
 	}
-	fn := b.Receiver().(*Function)
+	fn := b.Receiver().(HasDoc)
 	return String(fn.Name()), nil
 }
 
@@ -2375,7 +2398,7 @@ func help(thread *Thread, b *Builtin, args Tuple, kwargs []Tuple) (Value, error)
 		printf("%s(", fn.Name())
 		n, firstDefault := fn.NumParams(), fn.NumParams()-len(fn.defaults)
 		for i := 0; i < n; i++ {
-			binding := fn.funcode.Locals[i]
+			binding := fn.code.funcode.Locals[i]
 			if i > 0 {
 				printf(", ")
 			}

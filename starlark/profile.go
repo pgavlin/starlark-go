@@ -387,7 +387,7 @@ func profFuncAddr(fn Callable) uintptr {
 	case *Builtin:
 		return reflect.ValueOf(fn.fn).Pointer()
 	case *Function:
-		return uintptr(unsafe.Pointer(fn.funcode))
+		return uintptr(unsafe.Pointer(fn.code.funcode))
 	}
 
 	// User-defined callable types are typically of

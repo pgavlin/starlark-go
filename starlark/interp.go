@@ -30,13 +30,13 @@ func (fn *Function) CallInternal(thread *Thread, args Tuple, kwargs []Tuple) (Va
 			// We look for the same function code,
 			// not function value, otherwise the user could
 			// defeat the check by writing the Y combinator.
-			if frfn, ok := fr.Callable().(*Function); ok && frfn.funcode == fn.funcode {
+			if frfn, ok := fr.Callable().(*Function); ok && frfn.code.funcode == fn.code.funcode {
 				return nil, fmt.Errorf("function %s called recursively", fn.Name())
 			}
 		}
 	}
 
-	f := fn.funcode
+	f := fn.code.funcode
 	fr := thread.frameAt(0)
 
 	// Allocate space for stack and locals.
@@ -509,7 +509,7 @@ loop:
 			sp--
 
 		case compile.CONSTANT:
-			stack[sp] = fn.module.constants[arg]
+			stack[sp] = fn.code.module.constants[arg]
 			sp++
 
 		case compile.MAKETUPLE:
@@ -535,8 +535,10 @@ loop:
 			defaults := tuple[:n:n]
 			freevars := tuple[n:]
 			stack[sp-1] = &Function{
-				funcode:  funcode,
-				module:   fn.module,
+				code: &FunctionCode{
+					funcode: funcode,
+					module:  fn.code.module,
+				},
 				defaults: defaults,
 				freevars: freevars,
 			}
@@ -584,7 +586,7 @@ loop:
 			sp--
 
 		case compile.SETGLOBAL:
-			fn.module.globals[arg] = stack[sp-1]
+			fn.code.module.globals[arg] = stack[sp-1]
 			sp--
 
 		case compile.LOCAL:
@@ -619,7 +621,7 @@ loop:
 			sp++
 
 		case compile.GLOBAL:
-			x := fn.module.globals[arg]
+			x := fn.code.module.globals[arg]
 			if x == nil {
 				err = fmt.Errorf("global variable %s referenced before assignment", f.Prog.Globals[arg].Name)
 				break loop
@@ -629,7 +631,7 @@ loop:
 
 		case compile.PREDECLARED:
 			name := f.Prog.Names[arg]
-			x := fn.module.predeclared[name]
+			x := fn.code.module.predeclared[name]
 			if x == nil {
 				err = fmt.Errorf("internal error: predeclared variable %s is uninitialized", name)
 				break loop

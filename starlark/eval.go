@@ -190,7 +190,7 @@ func (fr *frame) Position() syntax.Position {
 	switch c := fr.callable.(type) {
 	case *Function:
 		// Starlark function
-		return c.funcode.Position(fr.pc)
+		return c.code.funcode.Position(fr.pc)
 	case callableWithPosition:
 		// If a built-in Callable defines
 		// a Position method, use it.
@@ -455,7 +455,7 @@ func ExecREPLChunk(f *syntax.File, thread *Thread, globals StringDict) error {
 	// Initialize module globals from parameter.
 	for i, id := range prog.compiled.Globals {
 		if v := globals[id.Name]; v != nil {
-			toplevel.module.globals[i] = v
+			toplevel.code.module.globals[i] = v
 		}
 	}
 
@@ -463,7 +463,7 @@ func ExecREPLChunk(f *syntax.File, thread *Thread, globals StringDict) error {
 
 	// Reflect changes to globals back to parameter, even after an error.
 	for i, id := range prog.compiled.Globals {
-		if v := toplevel.module.globals[i]; v != nil {
+		if v := toplevel.code.module.globals[i]; v != nil {
 			globals[id.Name] = v
 		}
 	}
@@ -494,12 +494,14 @@ func makeToplevelFunction(prog *compile.Program, predeclared StringDict) *Functi
 	}
 
 	return &Function{
-		funcode: prog.Toplevel,
-		module: &module{
-			program:     prog,
-			predeclared: predeclared,
-			globals:     make([]Value, len(prog.Globals)),
-			constants:   constants,
+		code: &FunctionCode{
+			funcode: prog.Toplevel,
+			module: &module{
+				program:     prog,
+				predeclared: predeclared,
+				globals:     make([]Value, len(prog.Globals)),
+				constants:   constants,
+			},
 		},
 	}
 }
@@ -1442,7 +1444,7 @@ func setArgs(locals []Value, fn *Function, args Tuple, kwargs []Tuple) error {
 	}
 
 	// Bind keyword arguments to parameters.
-	paramIdents := fn.funcode.Locals[:nparams]
+	paramIdents := fn.code.funcode.Locals[:nparams]
 	for _, pair := range kwargs {
 		k, v := pair[0].(String), pair[1]
 		if i := findParam(paramIdents, string(k)); i >= 0 {

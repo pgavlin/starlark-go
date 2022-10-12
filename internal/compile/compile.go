@@ -327,16 +327,22 @@ type Bytes string
 // Funcodes are serialized by the encoder.function method,
 // which must be updated whenever this declaration is changed.
 type Funcode struct {
-	Prog                  *Program
-	Pos                   syntax.Position // position of def or lambda token
-	Name                  string          // name of this function
-	Doc                   string          // docstring of this function
-	Code                  []byte          // the byte code
-	pclinetab             []uint16        // mapping from pc to linenum
-	Globals               []int           // indices of references globals
-	Locals                []Binding       // locals, parameters first
-	Cells                 []int           // indices of Locals that require cells
-	Freevars              []Binding       // for tracing
+	Prog        *Program
+	Pos         syntax.Position // position of def or lambda token
+	Name        string          // name of this function
+	Doc         string          // docstring of this function
+	Code        []byte          // the byte code
+	pclinetab   []uint16        // mapping from pc to linenum
+	Globals     []int           // indices of referenced globals
+	Locals      []Binding       // locals, parameters first
+	Cells       []int           // indices of Locals that require cells
+	Freevars    []Binding       // for tracing
+	Constants   []int           // indices of referenced constants
+	Predeclared []int           // indices of referenced predeclared values
+	Universals  []int           // indices of referenced universal values
+	Names       []int           // indices of referenced names
+	Functions   []int           // indices of referenced functions
+
 	MaxStack              int
 	NumParams             int
 	NumKwonlyParams       int
@@ -376,6 +382,12 @@ type fcomp struct {
 	pos   syntax.Position // current position of generated code
 	loops []loop
 	block *block
+
+	constants   map[uint32]struct{}
+	predeclared map[uint32]struct{}
+	universals  map[uint32]struct{}
+	names       map[uint32]struct{}
+	functions   map[uint32]struct{}
 }
 
 type loop struct {
@@ -526,6 +538,11 @@ func (pcomp *pcomp) function(name string, pos syntax.Position, stmts []syntax.St
 			Locals:   bindings(locals),
 			Freevars: bindings(freevars),
 		},
+		constants:   make(map[uint32]struct{}),
+		predeclared: make(map[uint32]struct{}),
+		universals:  make(map[uint32]struct{}),
+		names:       make(map[uint32]struct{}),
+		functions:   make(map[uint32]struct{}),
 	}
 
 	// Record indices of locals that require cells.
@@ -959,43 +976,55 @@ func (fcomp *fcomp) condjump(op Opcode, t, f *block) {
 
 // nameIndex returns the index of the specified name
 // within the name pool, adding it if necessary.
-func (pcomp *pcomp) nameIndex(name string) uint32 {
-	index, ok := pcomp.names[name]
+func (fcomp *fcomp) nameIndex(name string) uint32 {
+	index, ok := fcomp.pcomp.names[name]
 	if !ok {
-		index = uint32(len(pcomp.prog.Names))
-		pcomp.names[name] = index
-		pcomp.prog.Names = append(pcomp.prog.Names, name)
+		index = uint32(len(fcomp.pcomp.prog.Names))
+		fcomp.pcomp.names[name] = index
+		fcomp.pcomp.prog.Names = append(fcomp.pcomp.prog.Names, name)
+	}
+	if _, ok = fcomp.names[index]; !ok {
+		fcomp.names[index] = struct{}{}
+		fcomp.fn.Names = append(fcomp.fn.Names, int(index))
 	}
 	return index
 }
 
 // constantIndex returns the index of the specified constant
 // within the constant pool, adding it if necessary.
-func (pcomp *pcomp) constantIndex(v interface{}) uint32 {
-	index, ok := pcomp.constants[v]
+func (fcomp *fcomp) constantIndex(v interface{}) uint32 {
+	index, ok := fcomp.pcomp.constants[v]
 	if !ok {
-		index = uint32(len(pcomp.prog.Constants))
-		pcomp.constants[v] = index
-		pcomp.prog.Constants = append(pcomp.prog.Constants, v)
+		index = uint32(len(fcomp.pcomp.prog.Constants))
+		fcomp.pcomp.constants[v] = index
+		fcomp.pcomp.prog.Constants = append(fcomp.pcomp.prog.Constants, v)
+	}
+	if _, ok = fcomp.constants[index]; !ok {
+		fcomp.constants[index] = struct{}{}
+		fcomp.fn.Constants = append(fcomp.fn.Constants, int(index))
 	}
 	return index
 }
 
 // functionIndex returns the index of the specified function
 // AST the nestedfun pool, adding it if necessary.
-func (pcomp *pcomp) functionIndex(fn *Funcode) uint32 {
-	index, ok := pcomp.functions[fn]
+func (fcomp *fcomp) functionIndex(fn *Funcode) uint32 {
+	index, ok := fcomp.pcomp.functions[fn]
 	if !ok {
-		index = uint32(len(pcomp.prog.Functions))
-		pcomp.functions[fn] = index
-		pcomp.prog.Functions = append(pcomp.prog.Functions, fn)
+		index = uint32(len(fcomp.pcomp.prog.Functions))
+		fcomp.pcomp.functions[fn] = index
+		fcomp.pcomp.prog.Functions = append(fcomp.pcomp.prog.Functions, fn)
+	}
+	if _, ok = fcomp.functions[index]; !ok {
+		fcomp.functions[index] = struct{}{}
+		fcomp.fn.Functions = append(fcomp.fn.Functions, int(index))
 	}
 	return index
 }
 
 // string emits code to push the specified string.
 func (fcomp *fcomp) string(s string) {
-	fcomp.emit1(CONSTANT, fcomp.pcomp.constantIndex(s))
+	fcomp.emit1(CONSTANT, fcomp.constantIndex(s))
 }
 
 // setPos sets the current source position.
@@ -1037,9 +1066,21 @@ func (fcomp *fcomp) lookup(id *syntax.Ident) {
 	case resolve.Global:
 		fcomp.emit1(GLOBAL, uint32(bind.Index))
 	case resolve.Predeclared:
-		fcomp.emit1(PREDECLARED, fcomp.pcomp.nameIndex(id.Name))
+		idx := fcomp.nameIndex(id.Name)
+		if _, ok := fcomp.predeclared[idx]; !ok {
+			fcomp.predeclared[idx] = struct{}{}
+			fcomp.fn.Predeclared = append(fcomp.fn.Predeclared, int(idx))
+		}
+
+		fcomp.emit1(PREDECLARED, idx)
 	case resolve.Universal:
-		fcomp.emit1(UNIVERSAL, fcomp.pcomp.nameIndex(id.Name))
+		idx := fcomp.nameIndex(id.Name)
+		if _, ok := fcomp.universals[idx]; !ok {
+			fcomp.universals[idx] = struct{}{}
+			fcomp.fn.Universals = append(fcomp.fn.Universals, int(idx))
+		}
+
+		fcomp.emit1(UNIVERSAL, idx)
 	default:
 		log.Panicf("%s: compiler.lookup(%s): scope = %d", id.NamePos, id.Name, bind.Scope)
 	}
@@ -1141,7 +1182,7 @@ func (fcomp *fcomp) stmt(stmt syntax.Stmt) {
 				// x.f = ...
 				fcomp.expr(lhs.X)
 				fcomp.emit(DUP)
-				name := fcomp.pcomp.nameIndex(lhs.Name.Name)
+				name := fcomp.nameIndex(lhs.Name.Name)
 				fcomp.setPos(lhs.Dot)
 				fcomp.emit1(ATTR, name)
 				set = func() {
@@ -1288,7 +1329,7 @@ func (fcomp *fcomp) assign(pos syntax.Position, lhs syntax.Expr) {
 		fcomp.expr(lhs.X)
 		fcomp.emit(EXCH)
 		fcomp.setPos(lhs.Dot)
-		fcomp.emit1(SETFIELD, fcomp.pcomp.nameIndex(lhs.Name.Name))
+		fcomp.emit1(SETFIELD, fcomp.nameIndex(lhs.Name.Name))
 
 	default:
 		panic(lhs)
@@ -1317,7 +1358,7 @@ func (fcomp *fcomp) expr(e syntax.Expr) {
 		if e.Token == syntax.BYTES {
 			v = Bytes(v.(string))
 		}
-		fcomp.emit1(CONSTANT, fcomp.pcomp.constantIndex(v))
+		fcomp.emit1(CONSTANT, fcomp.constantIndex(v))
 
 	case *syntax.FStringExpr:
 		fcomp.interpolate(e)
@@ -1459,7 +1500,7 @@ func (fcomp *fcomp) expr(e syntax.Expr) {
 	case *syntax.DotExpr:
 		fcomp.expr(e.X)
 		fcomp.setPos(e.Dot)
-		fcomp.emit1(ATTR, fcomp.pcomp.nameIndex(e.Name.Name))
+		fcomp.emit1(ATTR, fcomp.nameIndex(e.Name.Name))
 
 	case *syntax.CallExpr:
 		fcomp.call(e)
@@ -1919,7 +1960,7 @@ func (fcomp *fcomp) function(f *resolve.Function) {
 	funcode.NumKwonlyParams = f.NumKwonlyParams
 	funcode.HasVarargs = f.HasVarargs
 	funcode.HasKwargs = f.HasKwargs
-	fcomp.emit1(MAKEFUNC, fcomp.pcomp.functionIndex(funcode))
+	fcomp.emit1(MAKEFUNC, fcomp.functionIndex(funcode))
 }
 
 // ifelse emits a Boolean control flow decision.

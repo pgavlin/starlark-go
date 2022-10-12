@@ -33,7 +33,6 @@
 //      HasBinary       -- value defines binary operations such as * and +
 //      HasAttrs        -- value has readable fields or methods x.f
 //      HasDoc          -- value has a name and a doc string
-//      HasEnv          -- value has a lexical environment like a function
 //      HasSetField     -- value has settable fields x.f
 //      HasSetIndex     -- value supports element update using x[i]=y
 //      HasSetKey       -- value supports map update using x[k]=v
@@ -327,12 +326,6 @@ var (
 	_ HasAttrs = new(Set)
 	_ HasAttrs = new(Function)
 )
-
-// A HasEnv value is a callable value with an associated lexical environment.
-type HasEnv interface {
-	Callable
-	Env() (globals, defaults, freevars Tuple)
-}
 
 // A HasSetField value has fields that may be written by a dot expression (x.f = y).
 //
@@ -675,13 +668,9 @@ func (it *stringCodepointsIterator) Next(p *Value) bool {
 
 func (*stringCodepointsIterator) Done() {}
 
-// A Function is a function defined by a Starlark def statement or lambda expression.
-// The initialization behavior of a Starlark module is also represented by a Function.
-type Function struct {
-	funcode  *compile.Funcode
-	module   *module
-	defaults Tuple
-	freevars Tuple
+type FunctionCode struct {
+	funcode *compile.Funcode
+	module  *module
 }
 
 // A module is the dynamic counterpart to a Program.
@@ -705,9 +694,106 @@ func (m *module) makeGlobalDict() StringDict {
 	return r
 }
 
-func (fn *Function) Name() string          { return fn.funcode.Name } // "lambda" for anonymous functions
-func (fn *Function) Doc() string           { return fn.funcode.Doc }
-func (fn *Function) Hash() (uint32, error) { return hashString(fn.funcode.Name), nil }
+func (fc *FunctionCode) String() string        { return toString(fc) }
+func (fc *FunctionCode) Type() string          { return "function-code" }
+func (fc *FunctionCode) Freeze()               {}
+func (fc *FunctionCode) Truth() Bool           { return true }
+func (fc *FunctionCode) Hash() (uint32, error) { return hashString(fc.funcode.Name), nil }
+
+func (fc *FunctionCode) Attr(name string) (Value, error) {
+	return builtinAttr(fc, name, functionCodeMethods)
+}
+func (fc *FunctionCode) AttrNames() []string { return builtinAttrNames(functionCodeMethods) }
+
+func (fc *FunctionCode) Name() string { return fc.funcode.Name } // "lambda" for anonymous functions
+func (fc *FunctionCode) Doc() string  { return fc.funcode.Doc }
+
+// Globals returns a new, unfrozen StringDict containing all global
+// variables so far defined in the function's module.
+func (fc *FunctionCode) Globals() StringDict { return fc.module.makeGlobalDict() }
+
+func (fc *FunctionCode) ModuleEnv() (module, globals Tuple) {
+	// Module data: names, constants, predeclared, universals, functions
+	//
+	// TODO(pdg): it would be nice to tree-shake the predeclared + universals down, especially in the case of
+	// large dictionary-like values.
+	names := make(Tuple, 0, len(fc.funcode.Names))
+	for _, index := range fc.funcode.Names {
+		names = append(names, String(fc.funcode.Prog.Names[index]))
+	}
+	constants := make(Tuple, 0, len(fc.funcode.Constants))
+	for _, index := range fc.funcode.Constants {
+		if v := fc.module.constants[index]; v != nil {
+			constants = append(constants, v)
+		}
+	}
+	predeclared := make(Tuple, 0, len(fc.funcode.Predeclared))
+	for _, index := range fc.funcode.Predeclared {
+		name := fc.funcode.Prog.Names[index]
+		if v := fc.module.predeclared[name]; v != nil {
+			predeclared = append(predeclared, Tuple{String(name), v})
+		}
+	}
+	universals := make(Tuple, 0, len(fc.funcode.Universals))
+	for _, index := range fc.funcode.Universals {
+		name := fc.funcode.Prog.Names[index]
+		if v := Universe[name]; v != nil {
+			universals = append(universals, Tuple{String(name), v})
+		}
+	}
+	functions := make(Tuple, 0, len(fc.funcode.Functions))
+	for _, index := range fc.funcode.Functions {
+		fun := fc.module.program.Functions[index]
+		functions = append(functions, &FunctionCode{funcode: fun, module: fc.module})
+	}
+	module = Tuple{names, constants, predeclared, universals, functions}
+
+	// Globals
+	globals = make(Tuple, 0, len(fc.funcode.Globals))
+	for _, index := range fc.funcode.Globals {
+		if v := fc.module.globals[index]; v != nil {
+			id := fc.module.program.Globals[index]
+			globals = append(globals, Tuple{String(id.Name), v})
+		}
+	}
+
+	return
+}
+
+// Bytecode returns the function's code. Callers must not modify the slice data.
+func (fc *FunctionCode) Bytecode() []byte {
+	return fc.funcode.Code
+}
+
+func (fc *FunctionCode) Position() syntax.Position { return fc.funcode.Pos }
+func (fc *FunctionCode) NumParams() int            { return fc.funcode.NumParams }
+func (fc *FunctionCode) NumKwonlyParams() int      { return fc.funcode.NumKwonlyParams }
+
+// Param returns the name and position of the ith parameter,
+// where 0 <= i < NumParams().
+// The *args and **kwargs parameters are at the end
+// even if there were optional parameters after *args.
+func (fc *FunctionCode) Param(i int) (string, syntax.Position) {
+	if i >= fc.NumParams() {
+		panic(i)
+	}
+	id := fc.funcode.Locals[i]
+	return id.Name, id.Pos
+}
+func (fc *FunctionCode) HasVarargs() bool { return fc.funcode.HasVarargs }
+func (fc *FunctionCode) HasKwargs() bool  { return fc.funcode.HasKwargs }
+
+// A Function is a function defined by a Starlark def statement or lambda expression.
+// The initialization behavior of a Starlark module is also represented by a Function.
+type Function struct {
+	code     *FunctionCode
+	defaults Tuple
+	freevars Tuple
+}
+
+func (fn *Function) Name() string          { return fn.code.Name() } // "lambda" for anonymous functions
+func (fn *Function) Doc() string           { return fn.code.Doc() }
+func (fn *Function) Hash() (uint32, error) { return hashString(fn.code.Name()), nil }
 func (fn *Function) Freeze()               { fn.defaults.Freeze(); fn.freevars.Freeze() }
 func (fn *Function) String() string        { return toString(fn) }
 func (fn *Function) Type() string          { return "function" }
@@ -718,22 +804,13 @@ func (fn *Function) AttrNames() []string             { return builtinAttrNames(f
 
 // Globals returns a new, unfrozen StringDict containing all global
 // variables so far defined in the function's module.
-func (fn *Function) Globals() StringDict { return fn.module.makeGlobalDict() }
+func (fn *Function) Globals() StringDict { return fn.code.Globals() }
 
 // Env returns the function's lexical environment.
-func (fn *Function) Env() (globals, defaults, freevars Tuple) {
-	// Globals
-	globals = make(Tuple, 0, len(fn.funcode.Globals))
-	for _, index := range fn.funcode.Globals {
-		if v := fn.module.globals[index]; v != nil {
-			id := fn.module.program.Globals[index]
-			globals = append(globals, Tuple{String(id.Name), v})
-		}
-	}
-
+func (fn *Function) Env() (defaults, freevars Tuple) {
 	// Default parameter values
 	nparams := fn.NumParams()
-	params := fn.funcode.Locals[nparams-len(fn.defaults):]
+	params := fn.code.funcode.Locals[nparams-len(fn.defaults):]
 	defaults = make(Tuple, len(fn.defaults))
 	for i, v := range fn.defaults {
 		defaults[i] = Tuple{String(params[i].Name), v}
@@ -745,44 +822,37 @@ func (fn *Function) Env() (globals, defaults, freevars Tuple) {
 		if cell, ok := v.(*cell); ok {
 			v = cell.v
 		}
-		freevars[i] = Tuple{String(fn.funcode.Freevars[i].Name), v}
+		freevars[i] = Tuple{String(fn.code.funcode.Freevars[i].Name), v}
 	}
 
 	return
 }
 
-// Code returns the functions bytecode. Callers must not modify the slice data.
-func (fn *Function) Code() []byte {
-	return fn.funcode.Code
+// Code returns the function's code.
+func (fn *Function) Code() *FunctionCode {
+	return fn.code
 }
 
-func (fn *Function) Position() syntax.Position { return fn.funcode.Pos }
-func (fn *Function) NumParams() int            { return fn.funcode.NumParams }
-func (fn *Function) NumKwonlyParams() int      { return fn.funcode.NumKwonlyParams }
+func (fn *Function) Position() syntax.Position { return fn.code.Position() }
+func (fn *Function) NumParams() int            { return fn.code.NumParams() }
+func (fn *Function) NumKwonlyParams() int      { return fn.code.NumKwonlyParams() }
 
 // Param returns the name and position of the ith parameter,
 // where 0 <= i < NumParams().
 // The *args and **kwargs parameters are at the end
 // even if there were optional parameters after *args.
 func (fn *Function) Param(i int) (string, syntax.Position) {
-	if i >= fn.NumParams() {
-		panic(i)
-	}
-	id := fn.funcode.Locals[i]
-	return id.Name, id.Pos
+	return fn.code.Param(i)
 }
-func (fn *Function) HasVarargs() bool { return fn.funcode.HasVarargs }
-func (fn *Function) HasKwargs() bool  { return fn.funcode.HasKwargs }
+func (fn *Function) HasVarargs() bool { return fn.code.HasVarargs() }
+func (fn *Function) HasKwargs() bool  { return fn.code.HasKwargs() }
 
 // A Builtin is a function implemented in Go.
 type Builtin struct {
-	name     string
-	doc      string
-	fn       func(thread *Thread, fn *Builtin, args Tuple, kwargs []Tuple) (Value, error)
-	globals  Tuple
-	defaults Tuple
-	freevars Tuple
-	recv     Value // for bound methods (e.g. "".startswith)
+	name string
+	doc  string
+	fn   func(thread *Thread, fn *Builtin, args Tuple, kwargs []Tuple) (Value, error)
+	recv Value // for bound methods (e.g. "".startswith)
 }
 
 func (b *Builtin) Name() string { return b.name }
@@ -810,10 +880,6 @@ func (b *Builtin) Truth() Bool { return true }
 func (b *Builtin) Attr(name string) (Value, error) { return builtinAttr(b, name, functionMethods) }
 func (b *Builtin) AttrNames() []string             { return builtinAttrNames(functionMethods) }
 
-func (b *Builtin) Env() (globals, defaults, freevars Tuple) {
-	return b.globals, b.defaults, b.freevars
-}
-
 // NewBuiltin returns a new 'builtin_function_or_method' value with the specified name
 // and implementation.  It compares unequal with all other values.
 func NewBuiltin(name string, fn func(thread *Thread, fn *Builtin, args Tuple, kwargs []Tuple) (Value, error)) *Builtin {
@@ -824,17 +890,6 @@ func NewBuiltin(name string, fn func(thread *Thread, fn *Builtin, args Tuple, kw
 func (b *Builtin) WithDoc(doc string) *Builtin {
 	b.doc = doc
 	return b
-}
-
-// BindEnv returns a new Builtin value bound to the given environment.
-func (b *Builtin) BindEnv(globals, defaults, freevars Tuple) *Builtin {
-	return &Builtin{
-		name:     b.name,
-		fn:       b.fn,
-		globals:  globals,
-		defaults: defaults,
-		freevars: freevars,
-	}
 }
 
 // BindReceiver returns a new Builtin value representing a method
@@ -1265,6 +1320,9 @@ func writeValue(out *strings.Builder, x Value, path []Value) {
 			out.WriteByte(',')
 		}
 		out.WriteByte(')')
+
+	case *FunctionCode:
+		fmt.Fprintf(out, "<function code %s>", x.Name())
 
 	case *Function:
 		fmt.Fprintf(out, "<function %s>", x.Name())
