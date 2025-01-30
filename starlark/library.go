@@ -2424,7 +2424,7 @@ func help(thread *Thread, b *Builtin, args Tuple, kwargs []Tuple) (Value, error)
 		}
 	}
 
-	trimpost := 0
+	trimpost := len(docstring)
 	for i := len(docstring); i > 0; i-- {
 		b := docstring[i-1]
 		if b >= 128 || !unicode.IsSpace(rune(b)) {
