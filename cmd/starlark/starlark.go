@@ -4,7 +4,7 @@
 
 // The starlark command interprets a Starlark file.
 // With no arguments, it starts a read-eval-print loop (REPL).
-package main // import "go.starlark.net/cmd/starlark"
+package main // import "github.com/pgavlin/starlark-go/cmd/starlark"
 
 import (
 	"flag"
@@ -15,13 +15,13 @@ import (
 	"runtime/pprof"
 	"strings"
 
-	"go.starlark.net/internal/compile"
-	"go.starlark.net/lib/json"
-	"go.starlark.net/lib/math"
-	"go.starlark.net/lib/time"
-	"go.starlark.net/repl"
-	"go.starlark.net/resolve"
-	"go.starlark.net/starlark"
+	"github.com/pgavlin/starlark-go/internal/compile"
+	"github.com/pgavlin/starlark-go/lib/json"
+	"github.com/pgavlin/starlark-go/lib/math"
+	"github.com/pgavlin/starlark-go/lib/time"
+	"github.com/pgavlin/starlark-go/repl"
+	"github.com/pgavlin/starlark-go/resolve"
+	"github.com/pgavlin/starlark-go/starlark"
 	"golang.org/x/term"
 )
 

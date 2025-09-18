@@ -18,10 +18,10 @@ import (
 	"unicode/utf8"
 	"unsafe"
 
-	"go.starlark.net/internal/compile"
-	"go.starlark.net/internal/spell"
-	"go.starlark.net/resolve"
-	"go.starlark.net/syntax"
+	"github.com/pgavlin/starlark-go/internal/compile"
+	"github.com/pgavlin/starlark-go/internal/spell"
+	"github.com/pgavlin/starlark-go/resolve"
+	"github.com/pgavlin/starlark-go/syntax"
 )
 
 // A Thread contains the state of a Starlark thread,

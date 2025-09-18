@@ -5,7 +5,7 @@
 // Package json defines utilities for converting Starlark values
 // to/from JSON strings. The most recent IETF standard for JSON is
 // https://www.ietf.org/rfc/rfc7159.txt.
-package json // import "go.starlark.net/lib/json"
+package json // import "github.com/pgavlin/starlark-go/lib/json"
 
 import (
 	"bytes"
@@ -20,8 +20,8 @@ import (
 	"strings"
 	"unicode/utf8"
 
-	"go.starlark.net/starlark"
-	"go.starlark.net/starlarkstruct"
+	"github.com/pgavlin/starlark-go/starlark"
+	"github.com/pgavlin/starlark-go/starlarkstruct"
 )
 
 // Module json is a Starlark module of JSON-related functions.

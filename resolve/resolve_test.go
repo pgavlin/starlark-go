@@ -8,10 +8,10 @@ import (
 	"strings"
 	"testing"
 
-	"go.starlark.net/internal/chunkedfile"
-	"go.starlark.net/resolve"
-	"go.starlark.net/starlarktest"
-	"go.starlark.net/syntax"
+	"github.com/pgavlin/starlark-go/internal/chunkedfile"
+	"github.com/pgavlin/starlark-go/resolve"
+	"github.com/pgavlin/starlark-go/starlarktest"
+	"github.com/pgavlin/starlark-go/syntax"
 )
 
 func setOptions(src string) {

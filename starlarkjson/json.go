@@ -6,10 +6,10 @@
 // backwards compatibility
 //
 // Deprecated: use go.starlark.net/lib/json instead
-package starlarkjson // import "go.starlark.net/stalarkjson"
+package starlarkjson // import "github.com/pgavlin/starlark-go/stalarkjson"
 
 import (
-	"go.starlark.net/lib/json"
+	"github.com/pgavlin/starlark-go/lib/json"
 )
 
 // Module is an alias of json.Module for backwards import compatibility
