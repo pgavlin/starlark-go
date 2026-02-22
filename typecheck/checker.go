@@ -38,34 +38,42 @@ type TypeDescriptor struct {
 	IterElem  Type                  // element type (Iterable)
 }
 
-// scope represents a lexical scope mapping names to types.
+// scope represents a lexical scope mapping names to bindings.
 type scope struct {
-	parent *scope
-	types  map[string]Type
+	parent   *scope
+	bindings map[string]*Binding
 }
 
-func (s *scope) lookup(name string) Type {
+func (s *scope) lookup(name string) *Binding {
 	for sc := s; sc != nil; sc = sc.parent {
-		if t, ok := sc.types[name]; ok {
-			return t
+		if b, ok := sc.bindings[name]; ok {
+			return b
 		}
 	}
 	return nil
 }
 
-func (s *scope) set(name string, t Type) {
-	if s.types == nil {
-		s.types = make(map[string]Type)
+func (s *scope) lookupType(name string) Type {
+	if b := s.lookup(name); b != nil {
+		return b.Type
 	}
-	s.types[name] = t
+	return nil
+}
+
+func (s *scope) set(b *Binding) {
+	if s.bindings == nil {
+		s.bindings = make(map[string]*Binding)
+	}
+	s.bindings[b.Name] = b
 }
 
 // Checker performs static type checking on resolved Starlark ASTs.
 type Checker struct {
-	env    *scope     // current type environment
-	errors []Error    // accumulated type errors
-	fn     *Callable  // current function (for return type checks)
-	tenv   *Env       // type environment for extension type lookups
+	env    *scope    // current type environment
+	errors []Error   // accumulated type errors
+	fn     *Callable // current function (for return type checks)
+	tenv   *Env      // type environment for extension type lookups
+	info   *Info     // type info to populate (may be nil)
 }
 
 func (c *Checker) errorf(pos syntax.Position, format string, args ...interface{}) {
@@ -99,7 +107,8 @@ func (c *Checker) lookupDescriptor(t Type) *TypeDescriptor {
 }
 
 // Check type-checks a resolved file and returns any type errors.
-func Check(file *syntax.File, env *Env) []Error {
+// If info is non-nil, the checker populates its non-nil maps with type information.
+func Check(file *syntax.File, env *Env, info *Info) []Error {
 	if env == nil {
 		env = StandardEnv()
 	}
@@ -107,12 +116,13 @@ func Check(file *syntax.File, env *Env) []Error {
 	c := &Checker{
 		env:  &scope{},
 		tenv: env,
+		info: info,
 	}
 
 	// Populate the base scope with predeclared names.
 	if env.Names != nil {
 		for name, t := range env.Names {
-			c.env.set(name, t)
+			c.defineName(name, t)
 		}
 	}
 
@@ -123,6 +133,32 @@ func Check(file *syntax.File, env *Env) []Error {
 		return nil
 	}
 	return c.errors
+}
+
+// define creates a Binding for id with the given type, adds it to the current
+// scope, and records it in info.Defs if the map is non-nil.
+func (c *Checker) define(id *syntax.Ident, typ Type) *Binding {
+	b := &Binding{Pos: id.NamePos, Name: id.Name, Type: typ}
+	c.env.set(b)
+	if c.info != nil && c.info.Defs != nil {
+		c.info.Defs[id] = b
+	}
+	return b
+}
+
+// defineName creates a Binding for a predeclared name (no AST node).
+func (c *Checker) defineName(name string, typ Type) *Binding {
+	b := &Binding{Name: name, Type: typ}
+	c.env.set(b)
+	return b
+}
+
+// record records the type of an expression in info.Types if the map is non-nil.
+func (c *Checker) record(expr syntax.Expr, typ Type) Type {
+	if c.info != nil && c.info.Types != nil {
+		c.info.Types[expr] = TypeAndValue{Type: typ}
+	}
+	return typ
 }
 
 func (c *Checker) stmts(stmts []syntax.Stmt) {
@@ -164,7 +200,7 @@ func (c *Checker) stmt(stmt syntax.Stmt) {
 	case *syntax.LoadStmt:
 		// Load statements: all loaded names get type Any.
 		for _, to := range s.To {
-			c.env.set(to.Name, Any)
+			c.define(to, Any)
 		}
 
 	case *syntax.BranchStmt:
@@ -203,11 +239,11 @@ func (c *Checker) bindForVars(vars syntax.Expr, iterType Type) {
 
 	switch v := vars.(type) {
 	case *syntax.Ident:
-		c.env.set(v.Name, elemType)
+		c.define(v, elemType)
 	case *syntax.TupleExpr:
 		for _, el := range v.List {
 			if id, ok := el.(*syntax.Ident); ok {
-				c.env.set(id.Name, Any) // conservative
+				c.define(id, Any) // conservative
 			}
 		}
 	case *syntax.ParenExpr:
@@ -228,7 +264,7 @@ func (c *Checker) checkAssignStmt(s *syntax.AssignStmt) {
 				}
 			}
 			if id, ok := s.LHS.(*syntax.Ident); ok {
-				c.env.set(id.Name, declaredType)
+				c.define(id, declaredType)
 			}
 		} else if s.RHS != nil {
 			// Simple assignment: x = expr
@@ -242,7 +278,7 @@ func (c *Checker) checkAssignStmt(s *syntax.AssignStmt) {
 			rhsType := c.exprType(s.RHS)
 			// Check if the existing variable has a declared type.
 			if id, ok := s.LHS.(*syntax.Ident); ok {
-				existingType := c.env.lookup(id.Name)
+				existingType := c.env.lookupType(id.Name)
 				if existingType != nil && existingType != Any {
 					// Check that the result is assignable.
 					resultType := c.binaryExprType(&syntax.BinaryExpr{
@@ -293,14 +329,14 @@ func (c *Checker) bindAssign(lhs syntax.Expr, rhsType Type) {
 	switch lhs := lhs.(type) {
 	case *syntax.Ident:
 		// Check if the variable was previously declared with a type.
-		existingType := c.env.lookup(lhs.Name)
+		existingType := c.env.lookupType(lhs.Name)
 		if existingType != nil && existingType != Any {
 			if !Assignable(rhsType, existingType) {
 				c.errorf(lhs.NamePos, "cannot use %s as %s", rhsType, existingType)
 			}
 			// Keep the declared type.
 		} else {
-			c.env.set(lhs.Name, rhsType)
+			c.define(lhs, rhsType)
 		}
 	case *syntax.TupleExpr:
 		for _, el := range lhs.List {
@@ -341,7 +377,7 @@ func (c *Checker) checkDefStmt(s *syntax.DefStmt) {
 	}
 
 	// Register the function in the current scope.
-	c.env.set(s.Name.Name, callable)
+	c.define(s.Name, callable)
 
 	// Check the function body in a new scope.
 	c.pushScope()
@@ -349,16 +385,59 @@ func (c *Checker) checkDefStmt(s *syntax.DefStmt) {
 	c.fn = callable
 
 	// Bind parameters in the function scope.
-	for _, p := range params {
-		if p.Name != "" {
-			c.env.set(p.Name, p.Type)
-		}
+	// Walk AST params to extract *syntax.Ident nodes for Defs recording.
+	for _, param := range s.Params {
+		c.defineParam(param)
 	}
 
 	c.stmts(s.Body)
 
 	c.fn = oldFn
 	c.popScope()
+}
+
+// defineParam extracts the identifier from a parameter AST node and defines it.
+func (c *Checker) defineParam(param syntax.Expr) {
+	switch p := param.(type) {
+	case *syntax.Ident:
+		c.define(p, Any)
+
+	case *syntax.TypeAnnotatedExpr:
+		typ := c.evalType(p.Type)
+		switch inner := p.X.(type) {
+		case *syntax.Ident:
+			c.define(inner, typ)
+		case *syntax.UnaryExpr:
+			if inner.X != nil {
+				if id, ok := inner.X.(*syntax.Ident); ok {
+					c.define(id, typ)
+				}
+			}
+		}
+
+	case *syntax.BinaryExpr:
+		if p.Op == syntax.EQ {
+			// param = default  or  param: type = default
+			x := p.X
+			var typ Type
+			if ta, ok := x.(*syntax.TypeAnnotatedExpr); ok {
+				typ = c.evalType(ta.Type)
+				x = ta.X
+			} else {
+				typ = Any
+			}
+			if id, ok := x.(*syntax.Ident); ok {
+				c.define(id, typ)
+			}
+		}
+
+	case *syntax.UnaryExpr:
+		if p.X != nil {
+			if id, ok := p.X.(*syntax.Ident); ok {
+				c.define(id, Any)
+			}
+		}
+	}
 }
 
 func (c *Checker) paramType(param syntax.Expr) []Param {

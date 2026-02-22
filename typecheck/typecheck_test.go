@@ -36,7 +36,7 @@ func check(t *testing.T, src string, env *typecheck.Env) []typecheck.Error {
 	}); err != nil {
 		t.Fatalf("resolve error: %v", err)
 	}
-	return typecheck.Check(f, env)
+	return typecheck.Check(f, env, nil)
 }
 
 func TestTypedAssignments(t *testing.T) {
@@ -334,4 +334,237 @@ func containsError(errs []typecheck.Error, substr string) bool {
 		}
 	}
 	return false
+}
+
+// checkWithInfo parses, resolves, and type-checks src, populating info.
+func checkWithInfo(t *testing.T, src string, info *typecheck.Info) (*syntax.File, []typecheck.Error) {
+	t.Helper()
+	f, err := syntax.Parse("test.star", src, 0)
+	if err != nil {
+		t.Fatalf("parse error: %v", err)
+	}
+	if err := resolve.File(f, func(name string) bool { return false }, func(name string) bool {
+		switch name {
+		case "None", "True", "False", "len", "str", "int", "float", "bool",
+			"list", "dict", "tuple", "range", "print", "type", "repr",
+			"hash", "enumerate", "zip", "any", "all", "chr", "ord",
+			"dir", "fail", "max", "min", "sorted", "reversed",
+			"hasattr", "getattr", "abs", "bytes", "set",
+			"struct", "module":
+			return true
+		}
+		return false
+	}); err != nil {
+		t.Fatalf("resolve error: %v", err)
+	}
+	errs := typecheck.Check(f, nil, info)
+	return f, errs
+}
+
+func TestInfoTypes(t *testing.T) {
+	info := &typecheck.Info{
+		Types: make(map[syntax.Expr]typecheck.TypeAndValue),
+	}
+	f, errs := checkWithInfo(t, "x = 5 + 3", info)
+	if len(errs) > 0 {
+		t.Fatalf("unexpected errors: %v", errs)
+	}
+
+	// Find the BinaryExpr (5+3) and verify it has type Int.
+	assign := f.Stmts[0].(*syntax.AssignStmt)
+	binExpr := assign.RHS.(*syntax.BinaryExpr)
+	if tv, ok := info.Types[binExpr]; !ok {
+		t.Error("BinaryExpr not in Types map")
+	} else if tv.Type != typecheck.Int {
+		t.Errorf("BinaryExpr type = %v, want int", tv.Type)
+	}
+
+	// Verify the literal 5 has type Int.
+	lit5 := binExpr.X.(*syntax.Literal)
+	if tv, ok := info.Types[lit5]; !ok {
+		t.Error("Literal 5 not in Types map")
+	} else if tv.Type != typecheck.Int {
+		t.Errorf("Literal 5 type = %v, want int", tv.Type)
+	}
+
+	// Verify the literal 3 has type Int.
+	lit3 := binExpr.Y.(*syntax.Literal)
+	if tv, ok := info.Types[lit3]; !ok {
+		t.Error("Literal 3 not in Types map")
+	} else if tv.Type != typecheck.Int {
+		t.Errorf("Literal 3 type = %v, want int", tv.Type)
+	}
+}
+
+func TestInfoDefs(t *testing.T) {
+	info := &typecheck.Info{
+		Defs: make(map[*syntax.Ident]*typecheck.Binding),
+	}
+	f, errs := checkWithInfo(t, "x: int = 5", info)
+	if len(errs) > 0 {
+		t.Fatalf("unexpected errors: %v", errs)
+	}
+
+	// Find the Ident "x" and verify it's in Defs with Type=Int.
+	assign := f.Stmts[0].(*syntax.AssignStmt)
+	id := assign.LHS.(*syntax.Ident)
+	b, ok := info.Defs[id]
+	if !ok {
+		t.Fatal("Ident 'x' not in Defs map")
+	}
+	if b.Type != typecheck.Int {
+		t.Errorf("Binding type = %v, want int", b.Type)
+	}
+	if b.Name != "x" {
+		t.Errorf("Binding name = %q, want %q", b.Name, "x")
+	}
+}
+
+func TestInfoUses(t *testing.T) {
+	info := &typecheck.Info{
+		Defs: make(map[*syntax.Ident]*typecheck.Binding),
+		Uses: make(map[*syntax.Ident]*typecheck.Binding),
+	}
+	f, errs := checkWithInfo(t, "x = 5\ny = x", info)
+	if len(errs) > 0 {
+		t.Fatalf("unexpected errors: %v", errs)
+	}
+
+	// "x = 5": x should be in Defs.
+	assign1 := f.Stmts[0].(*syntax.AssignStmt)
+	defId := assign1.LHS.(*syntax.Ident)
+	defBinding, ok := info.Defs[defId]
+	if !ok {
+		t.Fatal("Ident 'x' in 'x = 5' not in Defs map")
+	}
+	if defBinding.Type != typecheck.Int {
+		t.Errorf("Def binding type = %v, want int", defBinding.Type)
+	}
+
+	// "y = x": x should be in Uses, pointing to same Binding.
+	assign2 := f.Stmts[1].(*syntax.AssignStmt)
+	useId := assign2.RHS.(*syntax.Ident)
+	useBinding, ok := info.Uses[useId]
+	if !ok {
+		t.Fatal("Ident 'x' in 'y = x' not in Uses map")
+	}
+	if useBinding != defBinding {
+		t.Errorf("Use binding (%p) != Def binding (%p)", useBinding, defBinding)
+	}
+}
+
+func TestInfoFunctionDef(t *testing.T) {
+	info := &typecheck.Info{
+		Defs: make(map[*syntax.Ident]*typecheck.Binding),
+		Uses: make(map[*syntax.Ident]*typecheck.Binding),
+	}
+	_, errs := checkWithInfo(t, "def f(x: int) -> str:\n  return str(x)", info)
+	if len(errs) > 0 {
+		t.Fatalf("unexpected errors: %v", errs)
+	}
+
+	// Check that f is in Defs with a Callable type.
+	var fBinding *typecheck.Binding
+	for id, b := range info.Defs {
+		if id.Name == "f" {
+			fBinding = b
+			break
+		}
+	}
+	if fBinding == nil {
+		t.Fatal("function 'f' not found in Defs")
+	}
+	if _, ok := fBinding.Type.(*typecheck.Callable); !ok {
+		t.Errorf("function binding type = %T, want *Callable", fBinding.Type)
+	}
+
+	// Check that x param is in Defs with Int type.
+	var xDef *typecheck.Binding
+	for id, b := range info.Defs {
+		if id.Name == "x" {
+			xDef = b
+			break
+		}
+	}
+	if xDef == nil {
+		t.Fatal("param 'x' not found in Defs")
+	}
+	if xDef.Type != typecheck.Int {
+		t.Errorf("param binding type = %v, want int", xDef.Type)
+	}
+
+	// Check that x in "str(x)" is in Uses.
+	var xUse *typecheck.Binding
+	for id, b := range info.Uses {
+		if id.Name == "x" {
+			xUse = b
+			break
+		}
+	}
+	if xUse == nil {
+		t.Fatal("use of 'x' not found in Uses")
+	}
+	if xUse != xDef {
+		t.Error("use-site binding for x != def-site binding")
+	}
+}
+
+func TestInfoTypeOf(t *testing.T) {
+	info := &typecheck.Info{
+		Types: make(map[syntax.Expr]typecheck.TypeAndValue),
+		Defs:  make(map[*syntax.Ident]*typecheck.Binding),
+	}
+	f, errs := checkWithInfo(t, "x: int = 5", info)
+	if len(errs) > 0 {
+		t.Fatalf("unexpected errors: %v", errs)
+	}
+
+	assign := f.Stmts[0].(*syntax.AssignStmt)
+
+	// TypeOf on a literal (non-ident) should return Int.
+	lit := assign.RHS.(*syntax.Literal)
+	if typ := info.TypeOf(lit); typ != typecheck.Int {
+		t.Errorf("TypeOf(literal 5) = %v, want int", typ)
+	}
+
+	// TypeOf on a def-site ident should return Int via BindingOf fallback.
+	id := assign.LHS.(*syntax.Ident)
+	if typ := info.TypeOf(id); typ != typecheck.Int {
+		t.Errorf("TypeOf(ident x) = %v, want int", typ)
+	}
+
+	// BindingOf on the def-site ident.
+	b := info.BindingOf(id)
+	if b == nil {
+		t.Fatal("BindingOf(x) = nil")
+	}
+	if b.Type != typecheck.Int {
+		t.Errorf("BindingOf(x).Type = %v, want int", b.Type)
+	}
+}
+
+func TestInfoOptIn(t *testing.T) {
+	// Pass Info with only Types allocated (Defs/Uses nil).
+	info := &typecheck.Info{
+		Types: make(map[syntax.Expr]typecheck.TypeAndValue),
+	}
+	f, errs := checkWithInfo(t, "x = 5\ny = x", info)
+	if len(errs) > 0 {
+		t.Fatalf("unexpected errors: %v", errs)
+	}
+
+	// Types should be populated.
+	if len(info.Types) == 0 {
+		t.Error("Types map is empty")
+	}
+
+	// Defs/Uses should remain nil (no panic).
+	if info.Defs != nil {
+		t.Error("Defs should be nil")
+	}
+	if info.Uses != nil {
+		t.Error("Uses should be nil")
+	}
+
+	_ = f
 }

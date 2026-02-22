@@ -4,8 +4,17 @@ import (
 	"github.com/pgavlin/starlark-go/syntax"
 )
 
-// exprType infers the type of an expression.
+// exprType infers the type of an expression and records it.
 func (c *Checker) exprType(expr syntax.Expr) Type {
+	typ := c.exprTypeInner(expr)
+	if expr != nil {
+		c.record(expr, typ)
+	}
+	return typ
+}
+
+// exprTypeInner performs the actual type inference without recording.
+func (c *Checker) exprTypeInner(expr syntax.Expr) Type {
 	if expr == nil {
 		return Any
 	}
@@ -19,8 +28,12 @@ func (c *Checker) exprType(expr syntax.Expr) Type {
 			return Bool
 		}
 		// Look up in scope.
-		if t := c.env.lookup(e.Name); t != nil {
-			return t
+		if b := c.env.lookup(e.Name); b != nil {
+			// Record in Uses map.
+			if c.info != nil && c.info.Uses != nil {
+				c.info.Uses[e] = b
+			}
+			return b.Type
 		}
 		return Any
 

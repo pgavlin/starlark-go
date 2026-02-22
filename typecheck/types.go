@@ -4,6 +4,8 @@ package typecheck
 import (
 	"fmt"
 	"strings"
+
+	"github.com/pgavlin/starlark-go/syntax"
 )
 
 // Type represents a Starlark type.
@@ -160,6 +162,72 @@ type Named struct {
 
 func (t *Named) String() string { return t.Name }
 func (t *Named) typeNode()      {}
+
+// TypeAndValue reports the type of an expression.
+type TypeAndValue struct {
+	Type Type
+}
+
+// Binding represents a named Starlark entity such as a variable,
+// function, parameter, or predeclared name.
+type Binding struct {
+	Pos  syntax.Position // definition position (zero for predeclared)
+	Name string
+	Type Type
+}
+
+// Info holds the type information resulting from type-checking a Starlark file.
+// Only non-nil maps are populated during type-checking.
+type Info struct {
+	// Types maps expressions to their types. Use-site identifiers appear
+	// in both Types and Uses.
+	Types map[syntax.Expr]TypeAndValue
+
+	// Defs maps identifiers at definition sites to their bindings.
+	// This includes: assignment targets, def statement names, function
+	// parameters, for-loop variables, and load statement bindings.
+	Defs map[*syntax.Ident]*Binding
+
+	// Uses maps identifiers at use sites to the bindings they reference.
+	Uses map[*syntax.Ident]*Binding
+}
+
+// TypeOf returns the type of expression e, or nil if unknown.
+// For identifiers, it checks Types first, then Defs, then Uses.
+func (info *Info) TypeOf(e syntax.Expr) Type {
+	if info == nil {
+		return nil
+	}
+	if info.Types != nil {
+		if tv, ok := info.Types[e]; ok {
+			return tv.Type
+		}
+	}
+	if id, ok := e.(*syntax.Ident); ok {
+		if b := info.BindingOf(id); b != nil {
+			return b.Type
+		}
+	}
+	return nil
+}
+
+// BindingOf returns the binding for identifier id, checking Defs first, then Uses.
+func (info *Info) BindingOf(id *syntax.Ident) *Binding {
+	if info == nil {
+		return nil
+	}
+	if info.Defs != nil {
+		if b, ok := info.Defs[id]; ok {
+			return b
+		}
+	}
+	if info.Uses != nil {
+		if b, ok := info.Uses[id]; ok {
+			return b
+		}
+	}
+	return nil
+}
 
 // Assignable reports whether a value of type src can be assigned to a variable of type dst.
 func Assignable(src, dst Type) bool {
