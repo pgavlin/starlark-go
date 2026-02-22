@@ -67,6 +67,41 @@ File
 	}
 }
 
+func TestWalkDecorators(t *testing.T) {
+	const src = `
+x = 1
+
+@decorator
+def f():
+    pass
+
+@decorator(x)
+def g():
+    pass
+`
+	f, err := syntax.Parse("decorators.star", src, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	var idents []string
+	syntax.Walk(f, func(n syntax.Node) bool {
+		if id, ok := n.(*syntax.Ident); ok {
+			idents = append(idents, id.Name)
+		}
+		return true
+	})
+
+	got := strings.Join(idents, " ")
+	// Expect: x (assignment), decorator (first decorator expr),
+	// f (func name), decorator (second decorator call fn),
+	// x (decorator call arg), g (func name)
+	want := "x decorator f decorator x g"
+	if got != want {
+		t.Errorf("Walk over decorators:\ngot:  %s\nwant: %s", got, want)
+	}
+}
+
 // ExampleWalk demonstrates the use of Walk to
 // enumerate the identifiers in a Starlark source file
 // containing a nonsense program with varied grammar.

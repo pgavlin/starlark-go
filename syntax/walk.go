@@ -38,6 +38,9 @@ func Walk(n Node, f func(Node) bool) {
 		Walk(n.RHS, f)
 
 	case *DefStmt:
+		for _, decorator := range n.Decorators {
+			Walk(decorator.Expr, f)
+		}
 		Walk(n.Name, f)
 		for _, param := range n.Params {
 			Walk(param, f)
