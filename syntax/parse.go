@@ -187,8 +187,13 @@ func (p *parser) parseDefStmt() Stmt {
 	defpos := p.consume(DEF)
 	id := p.parseIdent()
 	p.consume(LPAREN)
-	params := p.parseParams()
+	params := p.parseParams(true)
 	p.consume(RPAREN)
+	var resultType Expr
+	if p.tok == RARROW {
+		p.nextToken() // consume ->
+		resultType = p.parseTest()
+	}
 	p.consume(COLON)
 	body := p.parseSuite()
 	return &DefStmt{
@@ -196,6 +201,7 @@ func (p *parser) parseDefStmt() Stmt {
 		Def:        defpos,
 		Name:       id,
 		Params:     params,
+		ResultType: resultType,
 		Body:       body,
 	}
 }
@@ -335,6 +341,18 @@ func (p *parser) parseSmallStmt() Stmt {
 		pos := p.nextToken() // consume op
 		rhs := p.parseExpr(false)
 		return &AssignStmt{OpPos: pos, Op: op, LHS: x, RHS: rhs}
+
+	case COLON:
+		// Typed assignment: x: type = expr
+		// Only valid when LHS is a simple identifier.
+		if _, ok := x.(*Ident); !ok {
+			p.in.errorf(p.in.pos, "type annotation requires a simple identifier on the left")
+		}
+		p.nextToken() // consume COLON
+		typeExpr := p.parseTest()
+		pos := p.consume(EQ)
+		rhs := p.parseExpr(false)
+		return &AssignStmt{OpPos: pos, Op: EQ, LHS: x, TypeExpr: typeExpr, RHS: rhs}
 	}
 
 	// Expression statement (e.g. function call, doc string).
@@ -448,20 +466,28 @@ func (p *parser) consume(t Token) Position {
 //
 // param = IDENT
 //       | IDENT EQ test
+//       | IDENT COLON test                  (type annotation, when allowed)
+//       | IDENT COLON test EQ test          (type annotation with default)
 //       | STAR
 //       | STAR IDENT
+//       | STAR IDENT COLON test             (*args type annotation)
 //       | STARSTAR IDENT
+//       | STARSTAR IDENT COLON test         (**kwargs type annotation)
 //
 // parseParams parses a parameter list.  The resulting expressions are of the form:
 //
 //      *Ident                                          x
 //      *Binary{Op: EQ, X: *Ident, Y: Expr}             x=y
+//      *TypeAnnotatedExpr{X: *Ident, Type: Expr}        x: type
+//      *Binary{Op: EQ, X: *TypeAnnotatedExpr, Y: Expr}  x: type = y
 //      *Unary{Op: STAR}                                *
 //      *Unary{Op: STAR, X: *Ident}                     *args
+//      *TypeAnnotatedExpr{X: *Unary{STAR}, Type: Expr}  *args: type
 //      *Unary{Op: STARSTAR, X: *Ident}                 **kwargs
-func (p *parser) parseParams() []Expr {
+//      *TypeAnnotatedExpr{X: *Unary{STARSTAR}, Type: Expr}  **kwargs: type
+func (p *parser) parseParams(allowTypeAnnotations bool) []Expr {
 	var params []Expr
-	for p.tok != RPAREN && p.tok != COLON && p.tok != EOF {
+	for p.tok != RPAREN && (allowTypeAnnotations || p.tok != COLON) && p.tok != EOF {
 		if len(params) > 0 {
 			p.consume(COMMA)
 		}
@@ -477,17 +503,56 @@ func (p *parser) parseParams() []Expr {
 			if op == STARSTAR || p.tok == IDENT {
 				x = p.parseIdent()
 			}
-			params = append(params, &UnaryExpr{
+			unary := &UnaryExpr{
 				OpPos: pos,
 				Op:    op,
 				X:     x,
-			})
+			}
+			// Check for type annotation on *args or **kwargs
+			if allowTypeAnnotations && x != nil && p.tok == COLON {
+				colon := p.nextToken()
+				typeExpr := p.parseTest()
+				params = append(params, &TypeAnnotatedExpr{
+					X:     unary,
+					Colon: colon,
+					Type:  typeExpr,
+				})
+			} else {
+				params = append(params, unary)
+			}
 			continue
 		}
 
 		// IDENT
 		// IDENT = test
+		// IDENT : type
+		// IDENT : type = test
 		id := p.parseIdent()
+
+		// Check for type annotation
+		if allowTypeAnnotations && p.tok == COLON {
+			colon := p.nextToken()
+			typeExpr := p.parseTest()
+			annotated := &TypeAnnotatedExpr{
+				X:     id,
+				Colon: colon,
+				Type:  typeExpr,
+			}
+			if p.tok == EQ { // default value
+				eq := p.nextToken()
+				dflt := p.parseTest()
+				params = append(params, &BinaryExpr{
+					X:     annotated,
+					OpPos: eq,
+					Op:    EQ,
+					Y:     dflt,
+				})
+			} else {
+				params = append(params, annotated)
+			}
+			continue
+		}
+
 		if p.tok == EQ { // default value
 			eq := p.nextToken()
 			dflt := p.parseTest()
@@ -576,7 +641,7 @@ func (p *parser) parseLambda(allowCond bool) Expr {
 	lambda := p.nextToken()
 	var params []Expr
 	if p.tok != COLON {
-		params = p.parseParams()
+		params = p.parseParams(false)
 	}
 	p.consume(COLON)
 

@@ -35,7 +35,12 @@ func Walk(n Node, f func(Node) bool) {
 
 	case *AssignStmt:
 		Walk(n.LHS, f)
-		Walk(n.RHS, f)
+		if n.TypeExpr != nil {
+			Walk(n.TypeExpr, f)
+		}
+		if n.RHS != nil {
+			Walk(n.RHS, f)
+		}
 
 	case *DefStmt:
 		for _, decorator := range n.Decorators {
@@ -44,6 +49,9 @@ func Walk(n Node, f func(Node) bool) {
 		Walk(n.Name, f)
 		for _, param := range n.Params {
 			Walk(param, f)
+		}
+		if n.ResultType != nil {
+			Walk(n.ResultType, f)
 		}
 		walkStmts(n.Body, f)
 
@@ -65,6 +73,10 @@ func Walk(n Node, f func(Node) bool) {
 		for _, to := range n.To {
 			Walk(to, f)
 		}
+
+	case *TypeAnnotatedExpr:
+		Walk(n.X, f)
+		Walk(n.Type, f)
 
 	case *Ident, *Literal:
 		// no-op

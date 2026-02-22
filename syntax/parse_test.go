@@ -216,6 +216,21 @@ def g(): pass`,
 			`(ExprStmt X=(CallExpr Fn=f))`},
 		{"f();\n",
 			`(ExprStmt X=(CallExpr Fn=f))`},
+		// Type annotations
+		{`def f(x: int): pass`,
+			`(DefStmt Name=f Params=((TypeAnnotatedExpr X=x Type=int)) Body=((BranchStmt Token=pass)))`},
+		{`def f(x: int, y: str = "hello"): pass`,
+			`(DefStmt Name=f Params=((TypeAnnotatedExpr X=x Type=int) (BinaryExpr X=(TypeAnnotatedExpr X=y Type=str) Op== Y="hello")) Body=((BranchStmt Token=pass)))`},
+		{`def f(x: int) -> str: pass`,
+			`(DefStmt Name=f Params=((TypeAnnotatedExpr X=x Type=int)) ResultType=str Body=((BranchStmt Token=pass)))`},
+		{`def f(*args: int, **kwargs: str): pass`,
+			`(DefStmt Name=f Params=((TypeAnnotatedExpr X=(UnaryExpr Op=* X=args) Type=int) (TypeAnnotatedExpr X=(UnaryExpr Op=** X=kwargs) Type=str)) Body=((BranchStmt Token=pass)))`},
+		{`def f(x: list[int]): pass`,
+			`(DefStmt Name=f Params=((TypeAnnotatedExpr X=x Type=(IndexExpr X=list Y=int))) Body=((BranchStmt Token=pass)))`},
+		{`def f(x: int | str): pass`,
+			`(DefStmt Name=f Params=((TypeAnnotatedExpr X=x Type=(BinaryExpr X=int Op=| Y=str))) Body=((BranchStmt Token=pass)))`},
+		{`x: int = 5`,
+			`(AssignStmt Op== LHS=x TypeExpr=int RHS=5)`},
 	} {
 		f, err := syntax.Parse("foo.star", test.input, 0)
 		if err != nil {

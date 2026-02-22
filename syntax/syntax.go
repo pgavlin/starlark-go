@@ -99,20 +99,29 @@ func (*LoadStmt) stmt()   {}
 func (*ReturnStmt) stmt() {}
 
 // An AssignStmt represents an assignment:
+//
 //	x = 0
 //	x, y = y, x
-// 	x += 1
+//	x += 1
+//	x: int = 0  (typed assignment)
 type AssignStmt struct {
 	commentsRef
-	OpPos Position
-	Op    Token // = EQ | {PLUS,MINUS,STAR,PERCENT}_EQ
-	LHS   Expr
-	RHS   Expr
+	OpPos    Position
+	Op       Token // = EQ | {PLUS,MINUS,STAR,PERCENT}_EQ
+	LHS      Expr
+	TypeExpr Expr // type annotation (nil if absent)
+	RHS      Expr
 }
 
 func (x *AssignStmt) Span() (start, end Position) {
 	start, _ = x.LHS.Span()
-	_, end = x.RHS.Span()
+	if x.RHS != nil {
+		_, end = x.RHS.Span()
+	} else if x.TypeExpr != nil {
+		_, end = x.TypeExpr.Span()
+	} else {
+		end = x.OpPos
+	}
 	return
 }
 
@@ -135,6 +144,7 @@ type DefStmt struct {
 	Def        Position
 	Name       *Ident
 	Params     []Expr // param = ident | ident=expr | * | *ident | **ident
+	ResultType Expr   // return type annotation (nil if absent)
 	Body       []Stmt
 
 	Function interface{} // a *resolve.Function, set by resolver
@@ -235,23 +245,24 @@ type Expr interface {
 	expr()
 }
 
-func (*BinaryExpr) expr()    {}
-func (*CallExpr) expr()      {}
-func (*Comprehension) expr() {}
-func (*CondExpr) expr()      {}
-func (*DictEntry) expr()     {}
-func (*DictExpr) expr()      {}
-func (*DotExpr) expr()       {}
-func (*FStringExpr) expr()   {}
-func (*Ident) expr()         {}
-func (*IndexExpr) expr()     {}
-func (*LambdaExpr) expr()    {}
-func (*ListExpr) expr()      {}
-func (*Literal) expr()       {}
-func (*ParenExpr) expr()     {}
-func (*SliceExpr) expr()     {}
-func (*TupleExpr) expr()     {}
-func (*UnaryExpr) expr()     {}
+func (*BinaryExpr) expr()        {}
+func (*CallExpr) expr()          {}
+func (*Comprehension) expr()     {}
+func (*CondExpr) expr()          {}
+func (*DictEntry) expr()         {}
+func (*DictExpr) expr()          {}
+func (*DotExpr) expr()           {}
+func (*FStringExpr) expr()       {}
+func (*Ident) expr()             {}
+func (*IndexExpr) expr()         {}
+func (*LambdaExpr) expr()        {}
+func (*ListExpr) expr()          {}
+func (*Literal) expr()           {}
+func (*ParenExpr) expr()         {}
+func (*SliceExpr) expr()         {}
+func (*TupleExpr) expr()         {}
+func (*TypeAnnotatedExpr) expr() {}
+func (*UnaryExpr) expr()         {}
 
 // An Ident represents an identifier.
 type Ident struct {
@@ -577,6 +588,23 @@ func (x *UnaryExpr) Span() (start, end Position) {
 		end = x.OpPos.add("*")
 	}
 	return x.OpPos, end
+}
+
+// A TypeAnnotatedExpr represents an expression with a type annotation: X : Type.
+//
+// Used in function parameters (def f(x: int)) and may appear inside
+// BinaryExpr for parameters with defaults (def f(x: int = 5)).
+type TypeAnnotatedExpr struct {
+	commentsRef
+	X     Expr     // the annotated expression
+	Colon Position // position of ':'
+	Type  Expr     // the type expression
+}
+
+func (x *TypeAnnotatedExpr) Span() (start, end Position) {
+	start, _ = x.X.Span()
+	_, end = x.Type.Span()
+	return start, end
 }
 
 // A BinaryExpr represents a binary expression: X Op Y.

@@ -1138,7 +1138,10 @@ func (fcomp *fcomp) stmt(stmt syntax.Stmt) {
 	case *syntax.AssignStmt:
 		switch stmt.Op {
 		case syntax.EQ:
-			// simple assignment: x = y
+			// simple assignment: x = y (possibly with type annotation, which is ignored)
+			if stmt.RHS == nil {
+				break // bare type annotation without assignment
+			}
 			fcomp.expr(stmt.RHS)
 			fcomp.assign(stmt.OpPos, stmt.LHS)
 
@@ -1507,6 +1510,10 @@ func (fcomp *fcomp) expr(e syntax.Expr) {
 
 	case *syntax.LambdaExpr:
 		fcomp.function(e.Function.(*resolve.Function))
+
+	case *syntax.TypeAnnotatedExpr:
+		// Type annotations are ignored at runtime; just compile the inner expression.
+		fcomp.expr(e.X)
 
 	default:
 		start, _ := e.Span()
@@ -1912,9 +1919,14 @@ func (fcomp *fcomp) function(f *resolve.Function) {
 	ndefaults := 0
 	seenStar := false
 	for _, param := range f.Params {
-		switch param := param.(type) {
+		// Unwrap TypeAnnotatedExpr (type annotations are ignored at runtime).
+		p := param
+		if ta, ok := p.(*syntax.TypeAnnotatedExpr); ok {
+			p = ta.X
+		}
+		switch p := p.(type) {
 		case *syntax.BinaryExpr:
-			fcomp.expr(param.Y)
+			fcomp.expr(p.Y)
 			ndefaults++
 		case *syntax.UnaryExpr:
 			seenStar = true // * or *args (also **kwargs)

@@ -503,13 +503,21 @@ func (r *resolver) stmt(stmt syntax.Stmt) {
 		r.ifstmts--
 
 	case *syntax.AssignStmt:
-		r.expr(stmt.RHS)
+		if stmt.TypeExpr != nil {
+			r.expr(stmt.TypeExpr)
+		}
+		if stmt.RHS != nil {
+			r.expr(stmt.RHS)
+		}
 		isAugmented := stmt.Op != syntax.EQ
 		r.assign(stmt.LHS, isAugmented)
 
 	case *syntax.DefStmt:
 		for _, decorator := range stmt.Decorators {
 			r.expr(decorator.Expr)
+		}
+		if stmt.ResultType != nil {
+			r.expr(stmt.ResultType)
 		}
 
 		r.bind(stmt.Name)
@@ -803,16 +811,28 @@ func (r *resolver) expr(e syntax.Expr) {
 	case *syntax.ParenExpr:
 		r.expr(e.X)
 
+	case *syntax.TypeAnnotatedExpr:
+		r.expr(e.X)
+		r.expr(e.Type)
+
 	default:
 		log.Panicf("unexpected expr %T", e)
 	}
 }
 
 func (r *resolver) function(function *Function, pos syntax.Position) {
-	// Resolve defaults in enclosing environment.
+	// Resolve defaults and type annotations in enclosing environment.
 	for _, param := range function.Params {
-		if binary, ok := param.(*syntax.BinaryExpr); ok {
-			r.expr(binary.Y)
+		switch param := param.(type) {
+		case *syntax.BinaryExpr:
+			// x = dflt  or  x: type = dflt
+			if ta, ok := param.X.(*syntax.TypeAnnotatedExpr); ok {
+				r.expr(ta.Type)
+			}
+			r.expr(param.Y)
+		case *syntax.TypeAnnotatedExpr:
+			// x: type  or  *args: type  or  **kwargs: type
+			r.expr(param.Type)
 		}
 	}
 
@@ -825,9 +845,15 @@ func (r *resolver) function(function *Function, pos syntax.Position) {
 	var starStar *syntax.Ident // **kwargs ident
 	var numKwonlyParams int
 	for _, param := range function.Params {
-		switch param := param.(type) {
+		// Unwrap TypeAnnotatedExpr to get the actual param.
+		actualParam := syntax.Expr(param)
+		if ta, ok := actualParam.(*syntax.TypeAnnotatedExpr); ok {
+			actualParam = ta.X
+		}
+
+		switch param := actualParam.(type) {
 		case *syntax.Ident:
-			// e.g. x
+			// e.g. x  or  x: type
 			if starStar != nil {
 				r.errorf(param.NamePos, "required parameter may not follow **%s", starStar.Name)
 			} else if star != nil {
@@ -840,13 +866,17 @@ func (r *resolver) function(function *Function, pos syntax.Position) {
 			}
 
 		case *syntax.BinaryExpr:
-			// e.g. y=dflt
+			// e.g. y=dflt  or  y: type = dflt
 			if starStar != nil {
 				r.errorf(param.OpPos, "optional parameter may not follow **%s", starStar.Name)
 			} else if star != nil {
 				numKwonlyParams++
 			}
-			if id := param.X.(*syntax.Ident); r.bind(id) {
+			x := param.X
+			if ta, ok := x.(*syntax.TypeAnnotatedExpr); ok {
+				x = ta.X
+			}
+			if id := x.(*syntax.Ident); r.bind(id) {
 				r.errorf(param.OpPos, "duplicate parameter: %s", id.Name)
 			}
 			seenOptional = true
@@ -876,7 +906,11 @@ func (r *resolver) function(function *Function, pos syntax.Position) {
 	//   def f(a, b, *args, c=0, **kwargs)
 	//   def f(a, b, *,     c=0, **kwargs)
 	if star != nil {
-		if id, _ := star.X.(*syntax.Ident); id != nil {
+		starX := star.X
+		if ta, ok := starX.(*syntax.TypeAnnotatedExpr); ok {
+			starX = ta.X
+		}
+		if id, _ := starX.(*syntax.Ident); id != nil {
 			// *args
 			if r.bind(id) {
 				r.errorf(id.NamePos, "duplicate parameter: %s", id.Name)
