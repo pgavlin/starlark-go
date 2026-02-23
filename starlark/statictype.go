@@ -70,7 +70,7 @@ func StaticType(v Value) typecheck.Type {
 	case *Builtin:
 		return v.StaticType()
 	default:
-		return &typecheck.Named{Name: v.Type()}
+		return &typecheck.NamedType{TypeName: v.Type()}
 	}
 }
 
@@ -148,9 +148,9 @@ func typesEqual(a, b typecheck.Type) bool {
 		if b, ok := b.(*typecheck.Set); ok {
 			return typesEqual(a.Elem, b.Elem)
 		}
-	case *typecheck.Named:
-		if b, ok := b.(*typecheck.Named); ok {
-			return a.Name == b.Name
+	case typecheck.Named:
+		if b, ok := b.(typecheck.Named); ok {
+			return a.Name() == b.Name()
 		}
 	}
 	return false

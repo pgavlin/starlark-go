@@ -139,12 +139,12 @@ func TestStaticTypeNamed(t *testing.T) {
 	}
 	v := &myValue{Value: starlark.None}
 	got := starlark.StaticType(v)
-	named, ok := got.(*typecheck.Named)
+	named, ok := got.(typecheck.Named)
 	if !ok {
-		t.Fatalf("StaticType(custom) = %T, want *typecheck.Named", got)
+		t.Fatalf("StaticType(custom) = %T, want typecheck.Named", got)
 	}
-	if named.Name != "NoneType" {
-		t.Errorf("Named.Name = %q, want %q", named.Name, "NoneType")
+	if named.Name() != "NoneType" {
+		t.Errorf("Named.Name() = %q, want %q", named.Name(), "NoneType")
 	}
 }
 

@@ -251,9 +251,15 @@ type ComparableType interface {
 	IsComparable() bool
 }
 
-// Named represents an extension type with optional typed capabilities.
-type Named struct {
-	Name       string
+// Named represents an extension type identified by name.
+type Named interface {
+	Type
+	Name() string
+}
+
+// NamedType is a convenience implementation of Named with optional typed capabilities.
+type NamedType struct {
+	TypeName   string
 	Attrs      map[string]Type
 	BinaryOps  map[syntax.Token]Type
 	UnaryOps   map[syntax.Token]Type
@@ -267,11 +273,12 @@ type Named struct {
 	Comparable *bool           // nil=unknown (assume comparable), &true=ordered, &false=not ordered
 }
 
-func (t *Named) String() string { return t.Name }
-func (t *Named) typeNode()      {}
+func (t *NamedType) Name() string   { return t.TypeName }
+func (t *NamedType) String() string { return t.TypeName }
+func (t *NamedType) typeNode()      {}
 
 // AttrType implements HasAttrsType.
-func (t *Named) AttrType(name string) Type {
+func (t *NamedType) AttrType(name string) Type {
 	if t.Attrs != nil {
 		if typ, ok := t.Attrs[name]; ok {
 			return typ
@@ -281,7 +288,7 @@ func (t *Named) AttrType(name string) Type {
 }
 
 // AttrNames implements HasAttrsType.
-func (t *Named) AttrNames() []string {
+func (t *NamedType) AttrNames() []string {
 	names := make([]string, 0, len(t.Attrs))
 	for name := range t.Attrs {
 		names = append(names, name)
@@ -290,7 +297,7 @@ func (t *Named) AttrNames() []string {
 }
 
 // SetFieldType implements HasSetFieldType.
-func (t *Named) SetFieldType(name string) Type {
+func (t *NamedType) SetFieldType(name string) Type {
 	if t.SetFields != nil {
 		if typ, ok := t.SetFields[name]; ok {
 			return typ
@@ -300,7 +307,7 @@ func (t *Named) SetFieldType(name string) Type {
 }
 
 // BinaryType implements HasBinaryType.
-func (t *Named) BinaryType(op syntax.Token) Type {
+func (t *NamedType) BinaryType(op syntax.Token) Type {
 	if t.BinaryOps != nil {
 		if typ, ok := t.BinaryOps[op]; ok {
 			return typ
@@ -310,7 +317,7 @@ func (t *Named) BinaryType(op syntax.Token) Type {
 }
 
 // UnaryType implements HasUnaryType.
-func (t *Named) UnaryType(op syntax.Token) Type {
+func (t *NamedType) UnaryType(op syntax.Token) Type {
 	if t.UnaryOps != nil {
 		if typ, ok := t.UnaryOps[op]; ok {
 			return typ
@@ -320,38 +327,38 @@ func (t *Named) UnaryType(op syntax.Token) Type {
 }
 
 // CallSignature implements CallableType.
-func (t *Named) CallSignature() *Callable {
+func (t *NamedType) CallSignature() *Callable {
 	return t.CallSig
 }
 
 // ElemType implements IndexableType.
-func (t *Named) ElemType() Type {
+func (t *NamedType) ElemType() Type {
 	return t.Index
 }
 
 // SliceResultType implements SliceableType.
-func (t *Named) SliceResultType() Type {
+func (t *NamedType) SliceResultType() Type {
 	return t.Slice
 }
 
 // IterElemType implements IterableType.
-func (t *Named) IterElemType() Type {
+func (t *NamedType) IterElemType() Type {
 	return t.IterElem
 }
 
 // SetIndexType implements HasSetIndexType.
-func (t *Named) SetIndexType() Type {
+func (t *NamedType) SetIndexType() Type {
 	return t.SetIndex
 }
 
 // MappingValueType implements MappingType.
-func (t *Named) MappingValueType() Type {
+func (t *NamedType) MappingValueType() Type {
 	return t.SetKey
 }
 
 // IsComparable implements ComparableType.
 // Returns true if Comparable is nil (unknown, assume comparable) or *true.
-func (t *Named) IsComparable() bool {
+func (t *NamedType) IsComparable() bool {
 	return t.Comparable == nil || *t.Comparable
 }
 
@@ -485,10 +492,10 @@ func Assignable(src, dst Type) bool {
 		if ds, ok := dst.(*Set); ok {
 			return Assignable(src.Elem, ds.Elem)
 		}
-	case *Named:
+	case Named:
 		// Named types match by name.
-		if dn, ok := dst.(*Named); ok {
-			return src.Name == dn.Name
+		if dn, ok := dst.(Named); ok {
+			return src.Name() == dn.Name()
 		}
 	case *Object:
 		// Object types match by name.

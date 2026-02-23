@@ -432,7 +432,7 @@ func (c *Checker) attrResultType(t Type, name string) Type {
 
 func isUnknownType(t Type) bool {
 	switch t := t.(type) {
-	case *Named:
+	case Named:
 		return true
 	case *Union:
 		for _, member := range t.Types {
