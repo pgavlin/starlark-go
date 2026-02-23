@@ -19,40 +19,14 @@ func (e Error) Error() string {
 // Env provides type information for predeclared names and extension types.
 type Env struct {
 	// Names maps predeclared/universal names to their types.
+	// Extension types should be registered here under both their type name
+	// (for use in annotations) and variable names (for bindings).
 	Names map[string]Type
-
-	// TypeDescriptors maps type names (as returned by Value.Type()) to
-	// descriptors that provide attribute, method, and operator type info.
-	TypeDescriptors map[string]*TypeDescriptor
 
 	// Load resolves type information for a loaded module.
 	// It receives the module string from the load() statement and returns
 	// a mapping of exported names to their types, or nil if unknown.
 	Load func(module string) map[string]Type
-}
-
-// TypeDescriptor describes the static type information for a Go-defined
-// Starlark type.
-type TypeDescriptor struct {
-	// Read-side operations:
-	Attrs     map[string]Type       // attribute name → type (HasAttrs)
-	Methods   map[string]*Callable  // method name → signature (HasAttrs)
-	BinaryOps map[syntax.Token]Type // op → result type (HasBinary)
-	UnaryOps  map[syntax.Token]Type // op → result type (HasUnary)
-	CallSig   *Callable             // call signature if Callable
-	IndexType Type                  // result of x[i] (Indexable)
-	SliceType Type                  // result of x[i:j] (Sliceable); nil = not sliceable
-	IterElem  Type                  // element type (Iterable)
-
-	// Write-side operations:
-	SetIndexType  Type            // type accepted by x[i]=v (HasSetIndex); nil = not settable
-	KeyType       Type            // key type for mapping get/set (Mapping)
-	ValueType     Type            // value type for mapping get/set (Mapping/HasSetKey)
-	SetFieldTypes map[string]Type // field name → accepted type (HasSetField); nil = not settable
-
-	// Capabilities:
-	Comparable bool // whether values support ordering operators (<, >, <=, >=)
-	Sequence   bool // whether value is a finite-length sequence
 }
 
 // scope represents a lexical scope mapping names to bindings.
@@ -105,23 +79,6 @@ func (c *Checker) popScope() {
 	c.env = c.env.parent
 }
 
-// lookupDescriptor returns the TypeDescriptor for a type, if available.
-func (c *Checker) lookupDescriptor(t Type) *TypeDescriptor {
-	if c.tenv == nil || c.tenv.TypeDescriptors == nil {
-		return nil
-	}
-	switch t := t.(type) {
-	case *Named:
-		if desc, ok := c.tenv.TypeDescriptors[t.Name]; ok {
-			return desc
-		}
-	case *Object:
-		if desc, ok := c.tenv.TypeDescriptors[t.Name]; ok {
-			return desc
-		}
-	}
-	return nil
-}
 
 // Check type-checks a resolved file and returns any type errors.
 // If info is non-nil, the checker populates its non-nil maps with type information.
@@ -259,8 +216,8 @@ func (c *Checker) bindForVars(vars syntax.Expr, iterType Type) {
 			elemType = String
 		} else if iterType == Bytes {
 			elemType = Int
-		} else if desc := c.lookupDescriptor(iterType); desc != nil && desc.IterElem != nil {
-			elemType = desc.IterElem
+		} else if it, ok := iterType.(IterableType); ok && it.IterElemType() != nil {
+			elemType = it.IterElemType()
 		} else {
 			elemType = Any
 		}
@@ -393,19 +350,19 @@ func (c *Checker) bindAssign(lhs syntax.Expr, rhsType Type) {
 				c.errorf(pos, "cannot use %s as %s in dict assignment", rhsType, t.Value)
 			}
 		default:
-			if desc := c.lookupDescriptor(xType); desc != nil {
-				if desc.ValueType != nil {
-					// Mapping-style key assignment (HasSetKey).
-					if !Assignable(rhsType, desc.ValueType) {
-						pos, _ := lhs.Span()
-						c.errorf(pos, "cannot use %s as %s", rhsType, desc.ValueType)
-					}
-				} else if desc.SetIndexType != nil {
-					// Sequence-style index assignment (HasSetIndex).
-					if !Assignable(rhsType, desc.SetIndexType) {
-						pos, _ := lhs.Span()
-						c.errorf(pos, "cannot use %s as %s", rhsType, desc.SetIndexType)
-					}
+			if mt, ok := xType.(MappingType); ok && mt.MappingValueType() != nil {
+				// Mapping-style key assignment.
+				vt := mt.MappingValueType()
+				if !Assignable(rhsType, vt) {
+					pos, _ := lhs.Span()
+					c.errorf(pos, "cannot use %s as %s", rhsType, vt)
+				}
+			} else if si, ok := xType.(HasSetIndexType); ok && si.SetIndexType() != nil {
+				// Sequence-style index assignment.
+				st := si.SetIndexType()
+				if !Assignable(rhsType, st) {
+					pos, _ := lhs.Span()
+					c.errorf(pos, "cannot use %s as %s", rhsType, st)
 				}
 			}
 		}
@@ -413,18 +370,10 @@ func (c *Checker) bindAssign(lhs syntax.Expr, rhsType Type) {
 		recvType := c.exprType(lhs.X)
 		name := lhs.Name.Name
 		// Validate the assigned value's type against the field's declared type.
-		if obj, ok := recvType.(*Object); ok {
-			if attrType, ok := obj.Attrs[name]; ok {
-				if !Assignable(rhsType, attrType) {
-					c.errorf(lhs.Name.NamePos, "cannot use %s as %s in field assignment", rhsType, attrType)
-				}
-			}
-		} else if desc := c.lookupDescriptor(recvType); desc != nil {
-			if desc.SetFieldTypes != nil {
-				if fieldType, ok := desc.SetFieldTypes[name]; ok {
-					if !Assignable(rhsType, fieldType) {
-						c.errorf(lhs.Name.NamePos, "cannot use %s as %s in field assignment", rhsType, fieldType)
-					}
+		if hsf, ok := recvType.(HasSetFieldType); ok {
+			if fieldType := hsf.SetFieldType(name); fieldType != nil {
+				if !Assignable(rhsType, fieldType) {
+					c.errorf(lhs.Name.NamePos, "cannot use %s as %s in field assignment", rhsType, fieldType)
 				}
 			}
 		}

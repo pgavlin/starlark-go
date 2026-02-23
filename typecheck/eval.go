@@ -36,10 +36,10 @@ func (c *Checker) evalType(expr syntax.Expr) Type {
 		case "any":
 			return Any
 		}
-		// Check TypeDescriptors for extension types.
-		if c.tenv != nil && c.tenv.TypeDescriptors != nil {
-			if _, ok := c.tenv.TypeDescriptors[e.Name]; ok {
-				return &Named{Name: e.Name}
+		// Check Names for extension types.
+		if c.tenv != nil && c.tenv.Names != nil {
+			if t, ok := c.tenv.Names[e.Name]; ok {
+				return t
 			}
 		}
 		c.errorf(e.NamePos, "unknown type: %s", e.Name)

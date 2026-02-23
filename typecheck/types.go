@@ -155,13 +155,198 @@ type Object struct {
 func (t *Object) String() string { return t.Name }
 func (t *Object) typeNode()      {}
 
-// Named refers to a type registered in Env.TypeDescriptors by name.
+// AttrType implements HasAttrsType for Object.
+func (t *Object) AttrType(name string) Type {
+	if t.Attrs != nil {
+		if typ, ok := t.Attrs[name]; ok {
+			return typ
+		}
+	}
+	if t.Methods != nil {
+		if m, ok := t.Methods[name]; ok {
+			return m
+		}
+	}
+	return nil
+}
+
+// SetFieldType implements HasSetFieldType for Object.
+// Object uses Attrs for both read and write.
+func (t *Object) SetFieldType(name string) Type {
+	if t.Attrs != nil {
+		if typ, ok := t.Attrs[name]; ok {
+			return typ
+		}
+	}
+	return nil
+}
+
+// HasAttrsType mirrors starlark.HasAttrs — type has typed attributes/methods.
+type HasAttrsType interface {
+	Type
+	AttrType(name string) Type // nil if not found
+}
+
+// HasSetFieldType mirrors starlark.HasSetField — type supports field assignment.
+type HasSetFieldType interface {
+	Type
+	SetFieldType(name string) Type // nil if not settable
+}
+
+// HasBinaryType mirrors starlark.HasBinary — typed binary operations.
+type HasBinaryType interface {
+	Type
+	BinaryType(op syntax.Token) Type // nil if not supported
+}
+
+// HasUnaryType mirrors starlark.HasUnary — typed unary operations.
+type HasUnaryType interface {
+	Type
+	UnaryType(op syntax.Token) Type // nil if not supported
+}
+
+// CallableType mirrors starlark.Callable — type can be called.
+type CallableType interface {
+	Type
+	CallSignature() *Callable
+}
+
+// IndexableType mirrors starlark.Indexable — supports x[i].
+type IndexableType interface {
+	Type
+	ElemType() Type
+}
+
+// SliceableType mirrors starlark.Sliceable — supports x[i:j].
+type SliceableType interface {
+	Type
+	SliceResultType() Type
+}
+
+// IterableType mirrors starlark.Iterable — can be iterated.
+type IterableType interface {
+	Type
+	IterElemType() Type
+}
+
+// HasSetIndexType mirrors starlark.HasSetIndex — supports x[i]=v.
+type HasSetIndexType interface {
+	Type
+	SetIndexType() Type
+}
+
+// MappingType mirrors starlark.Mapping — has key-value get/set semantics.
+type MappingType interface {
+	Type
+	MappingValueType() Type
+}
+
+// ComparableType mirrors starlark.Comparable — supports ordering.
+type ComparableType interface {
+	Type
+	IsComparable() bool
+}
+
+// Named represents an extension type with optional typed capabilities.
 type Named struct {
-	Name string
+	Name       string
+	Attrs      map[string]Type
+	Methods    map[string]*Callable
+	BinaryOps  map[syntax.Token]Type
+	UnaryOps   map[syntax.Token]Type
+	CallSig    *Callable
+	Index      Type            // ElemType for x[i]
+	Slice      Type            // result of x[i:j]
+	IterElem   Type            // element type for iteration
+	SetIndex   Type            // accepted type for x[i]=v (sequence-style)
+	SetKey     Type            // accepted value type for x[k]=v (mapping-style)
+	SetFields  map[string]Type // accepted types for x.field=v
+	Comparable *bool           // nil=unknown (assume comparable), &true=ordered, &false=not ordered
 }
 
 func (t *Named) String() string { return t.Name }
 func (t *Named) typeNode()      {}
+
+// AttrType implements HasAttrsType.
+func (t *Named) AttrType(name string) Type {
+	if t.Attrs != nil {
+		if typ, ok := t.Attrs[name]; ok {
+			return typ
+		}
+	}
+	if t.Methods != nil {
+		if m, ok := t.Methods[name]; ok {
+			return m
+		}
+	}
+	return nil
+}
+
+// SetFieldType implements HasSetFieldType.
+func (t *Named) SetFieldType(name string) Type {
+	if t.SetFields != nil {
+		if typ, ok := t.SetFields[name]; ok {
+			return typ
+		}
+	}
+	return nil
+}
+
+// BinaryType implements HasBinaryType.
+func (t *Named) BinaryType(op syntax.Token) Type {
+	if t.BinaryOps != nil {
+		if typ, ok := t.BinaryOps[op]; ok {
+			return typ
+		}
+	}
+	return nil
+}
+
+// UnaryType implements HasUnaryType.
+func (t *Named) UnaryType(op syntax.Token) Type {
+	if t.UnaryOps != nil {
+		if typ, ok := t.UnaryOps[op]; ok {
+			return typ
+		}
+	}
+	return nil
+}
+
+// CallSignature implements CallableType.
+func (t *Named) CallSignature() *Callable {
+	return t.CallSig
+}
+
+// ElemType implements IndexableType.
+func (t *Named) ElemType() Type {
+	return t.Index
+}
+
+// SliceResultType implements SliceableType.
+func (t *Named) SliceResultType() Type {
+	return t.Slice
+}
+
+// IterElemType implements IterableType.
+func (t *Named) IterElemType() Type {
+	return t.IterElem
+}
+
+// SetIndexType implements HasSetIndexType.
+func (t *Named) SetIndexType() Type {
+	return t.SetIndex
+}
+
+// MappingValueType implements MappingType.
+func (t *Named) MappingValueType() Type {
+	return t.SetKey
+}
+
+// IsComparable implements ComparableType.
+// Returns true if Comparable is nil (unknown, assume comparable) or *true.
+func (t *Named) IsComparable() bool {
+	return t.Comparable == nil || *t.Comparable
+}
 
 // TypeAndValue reports the type of an expression.
 type TypeAndValue struct {
@@ -251,66 +436,56 @@ func Assignable(src, dst Type) bool {
 		}
 		return false
 	}
-	if u, ok := src.(*Union); ok {
+
+	switch src := src.(type) {
+	case *Union:
 		// union is assignable to dst if all members are assignable to dst.
-		for _, t := range u.Types {
+		for _, t := range src.Types {
 			if !Assignable(t, dst) {
 				return false
 			}
 		}
 		return true
-	}
-
-	// List covariance.
-	if sl, ok := src.(*List); ok {
+	case *List:
+		// List covariance.
 		if dl, ok := dst.(*List); ok {
-			return Assignable(sl.Elem, dl.Elem)
+			return Assignable(src.Elem, dl.Elem)
 		}
-	}
-
-	// Dict covariance.
-	if sd, ok := src.(*Dict); ok {
+	case *Dict:
+		// Dict covariance.
 		if dd, ok := dst.(*Dict); ok {
-			return Assignable(sd.Key, dd.Key) && Assignable(sd.Value, dd.Value)
+			return Assignable(src.Key, dd.Key) && Assignable(src.Value, dd.Value)
 		}
-	}
-
-	// Set covariance.
-	if ss, ok := src.(*Set); ok {
+	case *Set:
+		// Set covariance.
 		if ds, ok := dst.(*Set); ok {
-			return Assignable(ss.Elem, ds.Elem)
+			return Assignable(src.Elem, ds.Elem)
 		}
-	}
-
-	// Named types match by name.
-	if sn, ok := src.(*Named); ok {
+	case *Named:
+		// Named types match by name.
 		if dn, ok := dst.(*Named); ok {
-			return sn.Name == dn.Name
+			return src.Name == dn.Name
 		}
-	}
-
-	// Object types match by name.
-	if so, ok := src.(*Object); ok {
+	case *Object:
+		// Object types match by name.
 		if do, ok := dst.(*Object); ok {
-			if so.Name == do.Name {
+			if src.Name == do.Name {
 				return true
 			}
 			// Structural matching: src has all attrs of dst.
 			for name, dstType := range do.Attrs {
-				srcType, ok := so.Attrs[name]
+				srcType, ok := src.Attrs[name]
 				if !ok || !Assignable(srcType, dstType) {
 					return false
 				}
 			}
 			return true
 		}
-	}
-
-	// Callable assignability: same structure.
-	if sc, ok := src.(*Callable); ok {
+	case *Callable:
+		// Callable assignability: same structure.
 		if dc, ok := dst.(*Callable); ok {
-			if sc.ReturnType != nil && dc.ReturnType != nil {
-				if !Assignable(sc.ReturnType, dc.ReturnType) {
+			if src.ReturnType != nil && dc.ReturnType != nil {
+				if !Assignable(src.ReturnType, dc.ReturnType) {
 					return false
 				}
 			}

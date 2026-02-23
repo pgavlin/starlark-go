@@ -145,29 +145,49 @@ func (c *Checker) binaryExprType(e *syntax.BinaryExpr) Type {
 		if t := c.plusType(left, right); t != Any {
 			return t
 		}
-		return c.binaryOpFromDescriptor(left, e.Op)
+		if hb, ok := left.(HasBinaryType); ok {
+			if t := hb.BinaryType(e.Op); t != nil {
+				return t
+			}
+		}
+		return Any
 	case syntax.MINUS, syntax.PERCENT, syntax.SLASHSLASH:
 		if t := c.arithmeticType(left, right); t != Any {
 			return t
 		}
-		return c.binaryOpFromDescriptor(left, e.Op)
+		if hb, ok := left.(HasBinaryType); ok {
+			if t := hb.BinaryType(e.Op); t != nil {
+				return t
+			}
+		}
+		return Any
 	case syntax.STAR:
 		if t := c.starType(left, right); t != Any {
 			return t
 		}
-		return c.binaryOpFromDescriptor(left, e.Op)
+		if hb, ok := left.(HasBinaryType); ok {
+			if t := hb.BinaryType(e.Op); t != nil {
+				return t
+			}
+		}
+		return Any
 	case syntax.SLASH:
 		// Division returns float for built-in numeric types.
 		if (left == Int || left == Float) && (right == Int || right == Float) {
 			return Float
 		}
-		return c.binaryOpFromDescriptor(left, e.Op)
+		if hb, ok := left.(HasBinaryType); ok {
+			if t := hb.BinaryType(e.Op); t != nil {
+				return t
+			}
+		}
+		return Any
 	case syntax.EQL, syntax.NEQ:
 		return Bool
 	case syntax.LT, syntax.GT, syntax.LE, syntax.GE:
 		// Warn if an extension type does not support ordering.
 		for _, operand := range []Type{left, right} {
-			if desc := c.lookupDescriptor(operand); desc != nil && !desc.Comparable {
+			if ct, ok := operand.(ComparableType); ok && !ct.IsComparable() {
 				c.errorf(e.OpPos, "type %s does not support %s", operand, e.Op)
 				break
 			}
@@ -183,20 +203,14 @@ func (c *Checker) binaryExprType(e *syntax.BinaryExpr) Type {
 		if left == Int && right == Int {
 			return Int
 		}
-		return c.binaryOpFromDescriptor(left, e.Op)
-	}
-
-	return Any
-}
-
-// binaryOpFromDescriptor checks the left operand's TypeDescriptor for a binary
-// operator result type. Returns Any if not found.
-func (c *Checker) binaryOpFromDescriptor(left Type, op syntax.Token) Type {
-	if desc := c.lookupDescriptor(left); desc != nil {
-		if resultType, ok := desc.BinaryOps[op]; ok {
-			return resultType
+		if hb, ok := left.(HasBinaryType); ok {
+			if t := hb.BinaryType(e.Op); t != nil {
+				return t
+			}
 		}
+		return Any
 	}
+
 	return Any
 }
 
@@ -275,9 +289,9 @@ func (c *Checker) unaryExprType(e *syntax.UnaryExpr) Type {
 		if x == Int || x == Float {
 			return x
 		}
-		if desc := c.lookupDescriptor(x); desc != nil {
-			if resultType, ok := desc.UnaryOps[e.Op]; ok {
-				return resultType
+		if hu, ok := x.(HasUnaryType); ok {
+			if t := hu.UnaryType(e.Op); t != nil {
+				return t
 			}
 		}
 		return Any
@@ -285,9 +299,9 @@ func (c *Checker) unaryExprType(e *syntax.UnaryExpr) Type {
 		if x == Int {
 			return Int
 		}
-		if desc := c.lookupDescriptor(x); desc != nil {
-			if resultType, ok := desc.UnaryOps[e.Op]; ok {
-				return resultType
+		if hu, ok := x.(HasUnaryType); ok {
+			if t := hu.UnaryType(e.Op); t != nil {
+				return t
 			}
 		}
 		return Any
@@ -305,11 +319,13 @@ func (c *Checker) callExprType(e *syntax.CallExpr) Type {
 		}
 		return Any
 	}
-	// Check if extension type is callable via TypeDescriptor.
-	if desc := c.lookupDescriptor(fnType); desc != nil && desc.CallSig != nil {
-		c.checkCallArgs(e, desc.CallSig)
-		if desc.CallSig.ReturnType != nil {
-			return desc.CallSig.ReturnType
+	// Check if extension type is callable via CallableType interface.
+	if ct, ok := fnType.(CallableType); ok {
+		if sig := ct.CallSignature(); sig != nil {
+			c.checkCallArgs(e, sig)
+			if sig.ReturnType != nil {
+				return sig.ReturnType
+			}
 		}
 	}
 	return Any
@@ -326,23 +342,10 @@ func (c *Checker) dotExprType(e *syntax.DotExpr) Type {
 		}
 	}
 
-	// Try Object attrs/methods.
-	if obj, ok := recvType.(*Object); ok {
-		if t, ok := obj.Attrs[name]; ok {
+	// Try HasAttrsType (covers Object, Named, and other types with attrs).
+	if hat, ok := recvType.(HasAttrsType); ok {
+		if t := hat.AttrType(name); t != nil {
 			return t
-		}
-		if m, ok := obj.Methods[name]; ok {
-			return m
-		}
-	}
-
-	// Try TypeDescriptor from Env.
-	if desc := c.lookupDescriptor(recvType); desc != nil {
-		if t, ok := desc.Attrs[name]; ok {
-			return t
-		}
-		if m, ok := desc.Methods[name]; ok {
-			return m
 		}
 	}
 
@@ -387,10 +390,10 @@ func (c *Checker) indexExprType(e *syntax.IndexExpr) Type {
 	if xType == Bytes {
 		return Int
 	}
-	// Check TypeDescriptor for Indexable types.
-	if desc := c.lookupDescriptor(xType); desc != nil {
-		if desc.IndexType != nil {
-			return desc.IndexType
+	// Check IndexableType interface.
+	if it, ok := xType.(IndexableType); ok {
+		if t := it.ElemType(); t != nil {
+			return t
 		}
 	}
 	return Any
@@ -410,8 +413,10 @@ func (c *Checker) sliceExprType(e *syntax.SliceExpr) Type {
 	if xType == Bytes {
 		return Bytes
 	}
-	if desc := c.lookupDescriptor(xType); desc != nil && desc.SliceType != nil {
-		return desc.SliceType
+	if st, ok := xType.(SliceableType); ok {
+		if t := st.SliceResultType(); t != nil {
+			return t
+		}
 	}
 	return Any
 }
