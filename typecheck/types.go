@@ -145,11 +145,10 @@ func (p Param) String() string {
 	return prefix + p.Name + suffix
 }
 
-// Object represents a value with a known set of attributes and methods.
+// Object represents a value with a known set of attributes.
 type Object struct {
-	Name    string
-	Attrs   map[string]Type
-	Methods map[string]*Callable
+	Name  string
+	Attrs map[string]Type
 }
 
 func (t *Object) String() string { return t.Name }
@@ -162,21 +161,13 @@ func (t *Object) AttrType(name string) Type {
 			return typ
 		}
 	}
-	if t.Methods != nil {
-		if m, ok := t.Methods[name]; ok {
-			return m
-		}
-	}
 	return nil
 }
 
 // AttrNames implements HasAttrsType for Object.
 func (t *Object) AttrNames() []string {
-	names := make([]string, 0, len(t.Attrs)+len(t.Methods))
+	names := make([]string, 0, len(t.Attrs))
 	for name := range t.Attrs {
-		names = append(names, name)
-	}
-	for name := range t.Methods {
 		names = append(names, name)
 	}
 	return names
@@ -264,7 +255,6 @@ type ComparableType interface {
 type Named struct {
 	Name       string
 	Attrs      map[string]Type
-	Methods    map[string]*Callable
 	BinaryOps  map[syntax.Token]Type
 	UnaryOps   map[syntax.Token]Type
 	CallSig    *Callable
@@ -287,21 +277,13 @@ func (t *Named) AttrType(name string) Type {
 			return typ
 		}
 	}
-	if t.Methods != nil {
-		if m, ok := t.Methods[name]; ok {
-			return m
-		}
-	}
 	return nil
 }
 
 // AttrNames implements HasAttrsType.
 func (t *Named) AttrNames() []string {
-	names := make([]string, 0, len(t.Attrs)+len(t.Methods))
+	names := make([]string, 0, len(t.Attrs))
 	for name := range t.Attrs {
-		names = append(names, name)
-	}
-	for name := range t.Methods {
 		names = append(names, name)
 	}
 	return names
