@@ -442,10 +442,19 @@ func Assignable(src, dst Type) bool {
 		return true
 	}
 
-	// Union types.
-	if u, ok := dst.(*Union); ok {
-		// src is assignable to union if src is assignable to any member.
-		for _, t := range u.Types {
+	// Source union: assignable if every member is assignable to dst.
+	if su, ok := src.(*Union); ok {
+		for _, t := range su.Types {
+			if !Assignable(t, dst) {
+				return false
+			}
+		}
+		return true
+	}
+
+	// Dest union: assignable if src is assignable to any member.
+	if du, ok := dst.(*Union); ok {
+		for _, t := range du.Types {
 			if Assignable(src, t) {
 				return true
 			}
@@ -454,14 +463,6 @@ func Assignable(src, dst Type) bool {
 	}
 
 	switch src := src.(type) {
-	case *Union:
-		// union is assignable to dst if all members are assignable to dst.
-		for _, t := range src.Types {
-			if !Assignable(t, dst) {
-				return false
-			}
-		}
-		return true
 	case *List:
 		// List covariance.
 		if dl, ok := dst.(*List); ok {

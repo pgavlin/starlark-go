@@ -86,6 +86,47 @@ func (c *Checker) getDefBinding(id *syntax.Ident) *Binding {
 	return c.bindings[rb] // fallback for predeclared/universal
 }
 
+// saveBindings returns a shallow copy of c.bindings for snapshot/restore.
+func (c *Checker) saveBindings() map[*resolve.Binding]*Binding {
+	snap := make(map[*resolve.Binding]*Binding, len(c.bindings))
+	for k, v := range c.bindings {
+		snap[k] = v
+	}
+	return snap
+}
+
+// restoreBindings replaces c.bindings with a previous snapshot.
+func (c *Checker) restoreBindings(snap map[*resolve.Binding]*Binding) {
+	c.bindings = snap
+}
+
+// mergeBindings unifies variable types from two possible execution paths
+// and sets the result as c.bindings. Declared bindings are kept as-is.
+func (c *Checker) mergeBindings(a, b map[*resolve.Binding]*Binding) {
+	merged := make(map[*resolve.Binding]*Binding, len(a))
+	for rb, ba := range a {
+		if bb, ok := b[rb]; ok {
+			if ba == bb || ba.Declared {
+				merged[rb] = ba
+			} else {
+				merged[rb] = &Binding{
+					Pos:  ba.Pos,
+					Name: ba.Name,
+					Type: c.unify(ba.Type, bb.Type),
+				}
+			}
+		} else {
+			merged[rb] = ba
+		}
+	}
+	for rb, bb := range b {
+		if _, ok := a[rb]; !ok {
+			merged[rb] = bb
+		}
+	}
+	c.bindings = merged
+}
+
 // Check type-checks a resolved file and returns any type errors.
 // If info is non-nil, the checker populates its non-nil maps with type information.
 func Check(file *syntax.File, env *Env, info *Info) []Error {
@@ -156,16 +197,36 @@ func (c *Checker) stmt(stmt syntax.Stmt) {
 	case *syntax.ForStmt:
 		iterType := c.exprType(s.X)
 		c.bindForVars(s.Vars, iterType)
+		preBody := c.saveBindings()
 		c.stmts(s.Body)
+		postBody := c.saveBindings()
+		c.mergeBindings(preBody, postBody)
 
 	case *syntax.WhileStmt:
 		c.exprType(s.Cond)
+		preBody := c.saveBindings()
 		c.stmts(s.Body)
+		postBody := c.saveBindings()
+		c.mergeBindings(preBody, postBody)
 
 	case *syntax.IfStmt:
 		c.exprType(s.Cond)
-		c.stmts(s.True)
-		c.stmts(s.False)
+		if len(s.False) == 0 {
+			// if without else: either branch might be taken
+			preIf := c.saveBindings()
+			c.stmts(s.True)
+			postTrue := c.saveBindings()
+			c.mergeBindings(preIf, postTrue)
+		} else {
+			// if with else: exactly one branch executes
+			preIf := c.saveBindings()
+			c.stmts(s.True)
+			postTrue := c.saveBindings()
+			c.restoreBindings(preIf)
+			c.stmts(s.False)
+			postFalse := c.saveBindings()
+			c.mergeBindings(postTrue, postFalse)
+		}
 
 	case *syntax.LoadStmt:
 		// Resolve module types via callback if available.

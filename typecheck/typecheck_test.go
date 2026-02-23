@@ -1106,6 +1106,156 @@ func TestUntypedReassignment(t *testing.T) {
 	}
 }
 
+func TestFlowSensitiveTypes(t *testing.T) {
+	// Env with predeclared "c" (bool) for conditions and "xs" (list[int]) for iteration.
+	env := &typecheck.Env{Predeclared: map[string]typecheck.Type{
+		"c":  typecheck.Bool,
+		"xs": &typecheck.List{Elem: typecheck.Int},
+	}}
+
+	tests := []struct {
+		name    string
+		src     string
+		wantErr string
+	}{
+		{
+			name:    "if no else, reassign",
+			src:     "def f():\n  x = 4\n  if c:\n    x = 'hello'\n  y: int = x",
+			wantErr: "cannot use",
+		},
+		{
+			name:    "if no else, union ok",
+			src:     "def f():\n  x = 4\n  if c:\n    x = 'hello'\n  y: int | str = x",
+			wantErr: "",
+		},
+		{
+			name:    "if no else, no reassign",
+			src:     "def f():\n  x = 4\n  if c:\n    pass\n  y: int = x",
+			wantErr: "",
+		},
+		{
+			name:    "if/else both reassign",
+			src:     "def f():\n  x = 4\n  if c:\n    x = 'hello'\n  else:\n    x = 1.5\n  y: int = x",
+			wantErr: "cannot use",
+		},
+		{
+			name:    "if/else one reassign",
+			src:     "def f():\n  x = 4\n  if c:\n    x = 'hello'\n  else:\n    pass\n  y: int = x",
+			wantErr: "cannot use",
+		},
+		{
+			name:    "for loop reassign",
+			src:     "def f():\n  x = 'hello'\n  for i in xs:\n    x = i\n  y: str = x",
+			wantErr: "cannot use",
+		},
+		{
+			name:    "declared var unaffected",
+			src:     "def f():\n  x: int = 4\n  if c:\n    x = 5\n  y: int = x",
+			wantErr: "",
+		},
+		{
+			name:    "no modification",
+			src:     "def f():\n  x = 4\n  if c:\n    y = 5\n  z: int = x",
+			wantErr: "",
+		},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			errs := check(t, test.src, env)
+			if test.wantErr == "" {
+				if len(errs) > 0 {
+					t.Errorf("unexpected errors: %v", errs)
+				}
+			} else {
+				if len(errs) == 0 {
+					t.Errorf("expected error containing %q, got none", test.wantErr)
+				} else if !containsError(errs, test.wantErr) {
+					t.Errorf("expected error containing %q, got %v", test.wantErr, errs)
+				}
+			}
+		})
+	}
+
+	// While loop test needs AllowRecursion.
+	t.Run("while loop reassign", func(t *testing.T) {
+		old := resolve.AllowRecursion
+		resolve.AllowRecursion = true
+		defer func() { resolve.AllowRecursion = old }()
+
+		src := "def f():\n  x = 4\n  while c:\n    x = 'hello'\n  y: int = x"
+		errs := check(t, src, env)
+		if len(errs) == 0 {
+			t.Errorf("expected error containing %q, got none", "cannot use")
+		} else if !containsError(errs, "cannot use") {
+			t.Errorf("expected error containing %q, got %v", "cannot use", errs)
+		}
+	})
+}
+
+func TestFlowSensitiveBindings(t *testing.T) {
+	env := &typecheck.Env{Predeclared: map[string]typecheck.Type{
+		"c": typecheck.Bool,
+	}}
+
+	info := &typecheck.Info{
+		Types: make(map[syntax.Expr]typecheck.TypeAndValue),
+		Defs:  make(map[*syntax.Ident]*typecheck.Binding),
+		Uses:  make(map[*syntax.Ident]*typecheck.UseBinding),
+	}
+
+	src := "def f():\n  x = 4\n  if c:\n    x = 'hello'\n  y = x"
+
+	f, err := syntax.Parse("test.star", src, 0)
+	if err != nil {
+		t.Fatalf("parse error: %v", err)
+	}
+	if err := resolve.File(f, func(name string) bool {
+		_, ok := env.Predeclared[name]
+		return ok
+	}, func(name string) bool {
+		_, ok := typecheck.Universe[name]
+		return ok
+	}); err != nil {
+		t.Fatalf("resolve error: %v", err)
+	}
+	errs := typecheck.Check(f, env, info)
+	if len(errs) > 0 {
+		t.Fatalf("unexpected errors: %v", errs)
+	}
+
+	// Navigate into the function body to find "y = x".
+	defStmt := f.Stmts[0].(*syntax.DefStmt)
+	body := defStmt.Body
+	// body[0] = x = 4, body[1] = if ..., body[2] = y = x
+	assign := body[2].(*syntax.AssignStmt)
+	useId := assign.RHS.(*syntax.Ident)
+	ub, ok := info.Uses[useId]
+	if !ok {
+		t.Fatal("x in 'y = x' not in Uses")
+	}
+
+	// The type should be a Union of int and string.
+	union, ok := ub.Type.(*typecheck.Union)
+	if !ok {
+		t.Fatalf("UseBinding.Type = %T (%v), want *Union", ub.Type, ub.Type)
+	}
+
+	// Check that the union contains both int and string.
+	hasInt, hasStr := false, false
+	for _, ut := range union.Types {
+		if ut == typecheck.Int {
+			hasInt = true
+		}
+		if ut == typecheck.String {
+			hasStr = true
+		}
+	}
+	if !hasInt || !hasStr {
+		t.Errorf("Union types = %v, want {int, string}", union.Types)
+	}
+}
+
 func TestReassignmentBindings(t *testing.T) {
 	info := &typecheck.Info{
 		Types: make(map[syntax.Expr]typecheck.TypeAndValue),
