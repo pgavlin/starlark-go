@@ -919,10 +919,13 @@ func TestIndexAssignmentBuiltins(t *testing.T) {
 	}{
 		// List index assignment.
 		{"xs = [1, 2, 3]\nxs[0] = 5", ""},
-		{"xs = [1, 2, 3]\nxs[0] = 'hi'", "cannot use string as int in list assignment"},
+		{"xs = [1, 2, 3]\nxs[0] = 'hi'", ""}, // widens to list[int | string]
 		// Dict key assignment.
 		{"d = {'a': 1}\nd['b'] = 2", ""},
-		{"d = {'a': 1}\nd['b'] = 'hi'", "cannot use string as int in dict assignment"},
+		{"d = {'a': 1}\nd['b'] = 'hi'", ""}, // widens to dict[string, int | string]
+		// Declared list/dict still error.
+		{"xs: list[int] = [1, 2, 3]\nxs[0] = 'hi'", "cannot use string as int in list assignment"},
+		{"d: dict[str, int] = {'a': 1}\nd['b'] = 'hi'", "cannot use string as int in dict assignment"},
 	}
 
 	for _, test := range tests {
@@ -1471,6 +1474,81 @@ func TestAllowRecursion(t *testing.T) {
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
 			errs := check(t, test.src, nil)
+			if test.wantErr == "" {
+				if len(errs) > 0 {
+					t.Errorf("unexpected errors: %v", errs)
+				}
+			} else {
+				if len(errs) == 0 {
+					t.Errorf("expected error containing %q, got none", test.wantErr)
+				} else if !containsError(errs, test.wantErr) {
+					t.Errorf("expected error containing %q, got %v", test.wantErr, errs)
+				}
+			}
+		})
+	}
+}
+
+func TestElementTypeWidening(t *testing.T) {
+	env := &typecheck.Env{Predeclared: map[string]typecheck.Type{
+		"c": typecheck.Bool,
+	}}
+
+	tests := []struct {
+		name    string
+		src     string
+		wantErr string
+	}{
+		{
+			name:    "list elem widen then use",
+			src:     "def f():\n  x = [0]\n  x[0] = \"hello\"\n  y: int = x[0]",
+			wantErr: "cannot use",
+		},
+		{
+			name:    "list elem compatible",
+			src:     "x = [1, 2, 3]\nx[0] = 5",
+			wantErr: "",
+		},
+		{
+			name:    "list elem widen no error",
+			src:     "def f():\n  x = [0]\n  x[0] = \"hello\"",
+			wantErr: "",
+		},
+		{
+			name:    "dict value widen then use",
+			src:     "def f():\n  d = {\"a\": 1}\n  d[\"b\"] = \"hello\"\n  y: int = d[\"b\"]",
+			wantErr: "cannot use",
+		},
+		{
+			name:    "nested list widen",
+			src:     "def f():\n  y = [[0]]\n  y[0][0] = \"hello\"\n  z: list[int] = y[0]",
+			wantErr: "cannot use",
+		},
+		{
+			name:    "nested list replace elem",
+			src:     "def f():\n  y = [[0]]\n  y[0] = 0\n  z: list[int] = y",
+			wantErr: "cannot use",
+		},
+		{
+			name:    "declared list no widen",
+			src:     "x: list[int] = [1, 2, 3]\nx[0] = \"hello\"",
+			wantErr: "cannot use string as int in list assignment",
+		},
+		{
+			name:    "declared dict no widen",
+			src:     "d: dict[str, int] = {\"a\": 1}\nd[\"b\"] = \"hello\"",
+			wantErr: "cannot use string as int in dict assignment",
+		},
+		{
+			name:    "branch merge after widen",
+			src:     "def f(c: bool):\n  x = [0]\n  if c:\n    x[0] = \"hello\"\n  y: int = x[0]",
+			wantErr: "cannot use",
+		},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			errs := check(t, test.src, env)
 			if test.wantErr == "" {
 				if len(errs) > 0 {
 					t.Errorf("unexpected errors: %v", errs)

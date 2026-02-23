@@ -376,6 +376,44 @@ func augmentedToOp(op syntax.Token) syntax.Token {
 	return op
 }
 
+// widenAssign propagates element type widening up through index expression
+// chains to update the root variable's binding. Returns true if the widening
+// succeeded, false if it could not be applied (e.g., declared variable,
+// non-variable root).
+func (c *Checker) widenAssign(expr syntax.Expr, newType Type) bool {
+	switch e := expr.(type) {
+	case *syntax.Ident:
+		rb, ok := e.Binding.(*resolve.Binding)
+		if !ok {
+			return false
+		}
+		b, ok := c.bindings[rb]
+		if !ok || b.Declared {
+			return false
+		}
+		c.bindings[rb] = &Binding{Pos: b.Pos, Name: b.Name, Type: newType}
+		return true
+	case *syntax.IndexExpr:
+		xType := c.exprType(e.X)
+		switch t := xType.(type) {
+		case *List:
+			if Assignable(newType, t.Elem) {
+				return true // already compatible
+			}
+			return c.widenAssign(e.X, &List{Elem: c.unify(t.Elem, newType)})
+		case *Dict:
+			if Assignable(newType, t.Value) {
+				return true
+			}
+			return c.widenAssign(e.X, &Dict{Key: t.Key, Value: c.unify(t.Value, newType)})
+		}
+		return false
+	case *syntax.ParenExpr:
+		return c.widenAssign(e.X, newType)
+	}
+	return false
+}
+
 func (c *Checker) bindAssign(lhs syntax.Expr, rhsType Type) {
 	switch lhs := lhs.(type) {
 	case *syntax.Ident:
@@ -419,13 +457,19 @@ func (c *Checker) bindAssign(lhs syntax.Expr, rhsType Type) {
 		switch t := xType.(type) {
 		case *List:
 			if !Assignable(rhsType, t.Elem) {
-				pos, _ := lhs.Span()
-				c.errorf(pos, "cannot use %s as %s in list assignment", rhsType, t.Elem)
+				newType := &List{Elem: c.unify(t.Elem, rhsType)}
+				if !c.widenAssign(lhs.X, newType) {
+					pos, _ := lhs.Span()
+					c.errorf(pos, "cannot use %s as %s in list assignment", rhsType, t.Elem)
+				}
 			}
 		case *Dict:
 			if !Assignable(rhsType, t.Value) {
-				pos, _ := lhs.Span()
-				c.errorf(pos, "cannot use %s as %s in dict assignment", rhsType, t.Value)
+				newType := &Dict{Key: t.Key, Value: c.unify(t.Value, rhsType)}
+				if !c.widenAssign(lhs.X, newType) {
+					pos, _ := lhs.Span()
+					c.errorf(pos, "cannot use %s as %s in dict assignment", rhsType, t.Value)
+				}
 			}
 		default:
 			if mt, ok := xType.(MappingType); ok && mt.MappingValueType() != nil {
