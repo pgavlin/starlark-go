@@ -170,6 +170,18 @@ func (t *Object) AttrType(name string) Type {
 	return nil
 }
 
+// AttrNames implements HasAttrsType for Object.
+func (t *Object) AttrNames() []string {
+	names := make([]string, 0, len(t.Attrs)+len(t.Methods))
+	for name := range t.Attrs {
+		names = append(names, name)
+	}
+	for name := range t.Methods {
+		names = append(names, name)
+	}
+	return names
+}
+
 // SetFieldType implements HasSetFieldType for Object.
 // Object uses Attrs for both read and write.
 func (t *Object) SetFieldType(name string) Type {
@@ -185,6 +197,7 @@ func (t *Object) SetFieldType(name string) Type {
 type HasAttrsType interface {
 	Type
 	AttrType(name string) Type // nil if not found
+	AttrNames() []string       // all available attribute/method names
 }
 
 // HasSetFieldType mirrors starlark.HasSetField — type supports field assignment.
@@ -280,6 +293,18 @@ func (t *Named) AttrType(name string) Type {
 		}
 	}
 	return nil
+}
+
+// AttrNames implements HasAttrsType.
+func (t *Named) AttrNames() []string {
+	names := make([]string, 0, len(t.Attrs)+len(t.Methods))
+	for name := range t.Attrs {
+		names = append(names, name)
+	}
+	for name := range t.Methods {
+		names = append(names, name)
+	}
+	return names
 }
 
 // SetFieldType implements HasSetFieldType.
