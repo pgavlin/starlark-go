@@ -79,22 +79,22 @@ func (c *Checker) popScope() {
 	c.env = c.env.parent
 }
 
-
 // Check type-checks a resolved file and returns any type errors.
 // If info is non-nil, the checker populates its non-nil maps with type information.
 func Check(file *syntax.File, env *Env, info *Info) []Error {
-	if env == nil {
-		env = StandardEnv()
-	}
-
 	c := &Checker{
 		env:  &scope{},
 		tenv: env,
 		info: info,
 	}
 
-	// Populate the base scope with predeclared names.
-	if env.Names != nil {
+	// Populate the base scope with universal names.
+	for name, t := range Universe {
+		c.defineName(name, t)
+	}
+
+	// Populate predeclared names from env (may override Universe).
+	if env != nil && env.Names != nil {
 		for name, t := range env.Names {
 			c.defineName(name, t)
 		}

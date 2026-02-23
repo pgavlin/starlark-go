@@ -36,7 +36,11 @@ func (c *Checker) evalType(expr syntax.Expr) Type {
 		case "any":
 			return Any
 		}
-		// Check Names for extension types.
+		// Check Universe for type names.
+		if t, ok := Universe[e.Name]; ok {
+			return t
+		}
+		// Check env.Names for extension type names.
 		if c.tenv != nil && c.tenv.Names != nil {
 			if t, ok := c.tenv.Names[e.Name]; ok {
 				return t

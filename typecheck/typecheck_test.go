@@ -23,16 +23,8 @@ func check(t *testing.T, src string, env *typecheck.Env) []typecheck.Error {
 		}
 		return false
 	}, func(name string) bool {
-		switch name {
-		case "None", "True", "False", "len", "str", "int", "float", "bool",
-			"list", "dict", "tuple", "range", "print", "type", "repr",
-			"hash", "enumerate", "zip", "any", "all", "chr", "ord",
-			"dir", "fail", "max", "min", "sorted", "reversed",
-			"hasattr", "getattr", "abs", "bytes", "set",
-			"struct", "module":
-			return true
-		}
-		return false
+		_, ok := typecheck.Universe[name]
+		return ok
 	}); err != nil {
 		t.Fatalf("resolve error: %v", err)
 	}
@@ -243,15 +235,16 @@ func TestFunctionTypesAsValues(t *testing.T) {
 }
 
 func TestExtensionTypes(t *testing.T) {
-	env := typecheck.StandardEnv()
 	mytype := &typecheck.Named{
 		Name: "mytype",
 		Attrs: map[string]typecheck.Type{
 			"count": typecheck.Int,
 		},
 	}
-	env.Names["mytype"] = mytype
-	env.Names["val"] = mytype
+	env := &typecheck.Env{Names: map[string]typecheck.Type{
+		"mytype": mytype,
+		"val":    mytype,
+	}}
 
 	tests := []struct {
 		src     string
@@ -344,16 +337,8 @@ func checkWithInfo(t *testing.T, src string, info *typecheck.Info) (*syntax.File
 		t.Fatalf("parse error: %v", err)
 	}
 	if err := resolve.File(f, func(name string) bool { return false }, func(name string) bool {
-		switch name {
-		case "None", "True", "False", "len", "str", "int", "float", "bool",
-			"list", "dict", "tuple", "range", "print", "type", "repr",
-			"hash", "enumerate", "zip", "any", "all", "chr", "ord",
-			"dir", "fail", "max", "min", "sorted", "reversed",
-			"hasattr", "getattr", "abs", "bytes", "set",
-			"struct", "module":
-			return true
-		}
-		return false
+		_, ok := typecheck.Universe[name]
+		return ok
 	}); err != nil {
 		t.Fatalf("resolve error: %v", err)
 	}
@@ -570,15 +555,16 @@ func TestInfoOptIn(t *testing.T) {
 }
 
 func TestUnaryOpsDescriptor(t *testing.T) {
-	env := typecheck.StandardEnv()
 	durationType := &typecheck.Named{
 		Name: "duration",
 		UnaryOps: map[syntax.Token]typecheck.Type{
 			syntax.MINUS: &typecheck.Named{Name: "duration"},
 		},
 	}
-	env.Names["duration"] = durationType
-	env.Names["d"] = durationType
+	env := &typecheck.Env{Names: map[string]typecheck.Type{
+		"duration": durationType,
+		"d":        durationType,
+	}}
 
 	tests := []struct {
 		src     string
@@ -604,7 +590,6 @@ func TestUnaryOpsDescriptor(t *testing.T) {
 }
 
 func TestCallSigDescriptor(t *testing.T) {
-	env := typecheck.StandardEnv()
 	regexType := &typecheck.Named{
 		Name: "regex",
 		CallSig: &typecheck.Callable{
@@ -613,8 +598,10 @@ func TestCallSigDescriptor(t *testing.T) {
 			ReturnType: typecheck.Bool,
 		},
 	}
-	env.Names["regex"] = regexType
-	env.Names["pattern"] = regexType
+	env := &typecheck.Env{Names: map[string]typecheck.Type{
+		"regex":   regexType,
+		"pattern": regexType,
+	}}
 
 	tests := []struct {
 		src     string
@@ -644,13 +631,14 @@ func TestCallSigDescriptor(t *testing.T) {
 }
 
 func TestIterElemDescriptor(t *testing.T) {
-	env := typecheck.StandardEnv()
 	strsetType := &typecheck.Named{
 		Name:     "strset",
 		IterElem: typecheck.String,
 	}
-	env.Names["strset"] = strsetType
-	env.Names["ss"] = strsetType
+	env := &typecheck.Env{Names: map[string]typecheck.Type{
+		"strset": strsetType,
+		"ss":     strsetType,
+	}}
 
 	tests := []struct {
 		src     string
@@ -677,14 +665,15 @@ func TestIterElemDescriptor(t *testing.T) {
 }
 
 func TestSliceTypeDescriptor(t *testing.T) {
-	env := typecheck.StandardEnv()
 	bufferType := &typecheck.Named{
 		Name:  "buffer",
 		Slice: &typecheck.Named{Name: "buffer"},
 		Index: typecheck.Int,
 	}
-	env.Names["buffer"] = bufferType
-	env.Names["buf"] = bufferType
+	env := &typecheck.Env{Names: map[string]typecheck.Type{
+		"buffer": bufferType,
+		"buf":    bufferType,
+	}}
 
 	tests := []struct {
 		src     string
@@ -712,7 +701,6 @@ func TestSliceTypeDescriptor(t *testing.T) {
 }
 
 func TestBinaryOpsAllOperators(t *testing.T) {
-	env := typecheck.StandardEnv()
 	vecType := &typecheck.Named{
 		Name: "vec",
 		BinaryOps: map[syntax.Token]typecheck.Type{
@@ -721,8 +709,10 @@ func TestBinaryOpsAllOperators(t *testing.T) {
 			syntax.STAR:  &typecheck.Named{Name: "vec"},
 		},
 	}
-	env.Names["vec"] = vecType
-	env.Names["v"] = vecType
+	env := &typecheck.Env{Names: map[string]typecheck.Type{
+		"vec": vecType,
+		"v":   vecType,
+	}}
 
 	tests := []struct {
 		src     string
@@ -751,14 +741,15 @@ func TestBinaryOpsAllOperators(t *testing.T) {
 }
 
 func TestSetIndexTypeDescriptor(t *testing.T) {
-	env := typecheck.StandardEnv()
 	intarrayType := &typecheck.Named{
 		Name:     "intarray",
 		Index:    typecheck.Int,
 		SetIndex: typecheck.Int,
 	}
-	env.Names["intarray"] = intarrayType
-	env.Names["arr"] = intarrayType
+	env := &typecheck.Env{Names: map[string]typecheck.Type{
+		"intarray": intarrayType,
+		"arr":      intarrayType,
+	}}
 
 	tests := []struct {
 		src     string
@@ -785,14 +776,15 @@ func TestSetIndexTypeDescriptor(t *testing.T) {
 }
 
 func TestMappingKeyValueDescriptor(t *testing.T) {
-	env := typecheck.StandardEnv()
 	configType := &typecheck.Named{
 		Name:   "config",
 		SetKey: typecheck.String,
 		Index:  typecheck.String,
 	}
-	env.Names["config"] = configType
-	env.Names["cfg"] = configType
+	env := &typecheck.Env{Names: map[string]typecheck.Type{
+		"config": configType,
+		"cfg":    configType,
+	}}
 
 	tests := []struct {
 		src     string
@@ -820,7 +812,6 @@ func TestMappingKeyValueDescriptor(t *testing.T) {
 }
 
 func TestSetFieldTypesDescriptor(t *testing.T) {
-	env := typecheck.StandardEnv()
 	pointType := &typecheck.Named{
 		Name: "point",
 		Attrs: map[string]typecheck.Type{
@@ -832,8 +823,10 @@ func TestSetFieldTypesDescriptor(t *testing.T) {
 			"y": typecheck.Int,
 		},
 	}
-	env.Names["point"] = pointType
-	env.Names["p"] = pointType
+	env := &typecheck.Env{Names: map[string]typecheck.Type{
+		"point": pointType,
+		"p":     pointType,
+	}}
 
 	tests := []struct {
 		src     string
@@ -864,7 +857,6 @@ func TestSetFieldTypesDescriptor(t *testing.T) {
 }
 
 func TestComparableDescriptor(t *testing.T) {
-	env := typecheck.StandardEnv()
 	boolTrue := true
 	boolFalse := false
 	orderedType := &typecheck.Named{
@@ -875,10 +867,12 @@ func TestComparableDescriptor(t *testing.T) {
 		Name:       "unordered",
 		Comparable: &boolFalse,
 	}
-	env.Names["ordered"] = orderedType
-	env.Names["unordered"] = unorderedType
-	env.Names["a"] = orderedType
-	env.Names["b"] = unorderedType
+	env := &typecheck.Env{Names: map[string]typecheck.Type{
+		"ordered":   orderedType,
+		"unordered": unorderedType,
+		"a":         orderedType,
+		"b":         unorderedType,
+	}}
 
 	tests := []struct {
 		src     string
@@ -944,14 +938,15 @@ func TestIndexAssignmentBuiltins(t *testing.T) {
 }
 
 func TestFieldAssignmentObject(t *testing.T) {
-	env := typecheck.StandardEnv()
-	env.Names["obj"] = &typecheck.Object{
-		Name: "myobj",
-		Attrs: map[string]typecheck.Type{
-			"name": typecheck.String,
-			"age":  typecheck.Int,
+	env := &typecheck.Env{Names: map[string]typecheck.Type{
+		"obj": &typecheck.Object{
+			Name: "myobj",
+			Attrs: map[string]typecheck.Type{
+				"name": typecheck.String,
+				"age":  typecheck.Int,
+			},
 		},
-	}
+	}}
 
 	tests := []struct {
 		src     string
