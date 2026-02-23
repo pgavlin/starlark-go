@@ -142,15 +142,38 @@ func (c *Checker) binaryExprType(e *syntax.BinaryExpr) Type {
 
 	switch e.Op {
 	case syntax.PLUS:
-		return c.plusType(left, right)
+		if t := c.plusType(left, right); t != Any {
+			return t
+		}
+		return c.binaryOpFromDescriptor(left, e.Op)
 	case syntax.MINUS, syntax.PERCENT, syntax.SLASHSLASH:
-		return c.arithmeticType(left, right)
+		if t := c.arithmeticType(left, right); t != Any {
+			return t
+		}
+		return c.binaryOpFromDescriptor(left, e.Op)
 	case syntax.STAR:
-		return c.starType(left, right)
+		if t := c.starType(left, right); t != Any {
+			return t
+		}
+		return c.binaryOpFromDescriptor(left, e.Op)
 	case syntax.SLASH:
-		// Division always returns float.
-		return Float
-	case syntax.EQL, syntax.NEQ, syntax.LT, syntax.GT, syntax.LE, syntax.GE, syntax.IN, syntax.NOT_IN:
+		// Division returns float for built-in numeric types.
+		if (left == Int || left == Float) && (right == Int || right == Float) {
+			return Float
+		}
+		return c.binaryOpFromDescriptor(left, e.Op)
+	case syntax.EQL, syntax.NEQ:
+		return Bool
+	case syntax.LT, syntax.GT, syntax.LE, syntax.GE:
+		// Warn if an extension type does not support ordering.
+		for _, operand := range []Type{left, right} {
+			if desc := c.lookupDescriptor(operand); desc != nil && !desc.Comparable {
+				c.errorf(e.OpPos, "type %s does not support %s", operand, e.Op)
+				break
+			}
+		}
+		return Bool
+	case syntax.IN, syntax.NOT_IN:
 		return Bool
 	case syntax.AND:
 		return c.unify(left, right)
@@ -160,15 +183,20 @@ func (c *Checker) binaryExprType(e *syntax.BinaryExpr) Type {
 		if left == Int && right == Int {
 			return Int
 		}
-		// Check extension types for binary ops.
-		if desc := c.lookupDescriptor(left); desc != nil {
-			if resultType, ok := desc.BinaryOps[e.Op]; ok {
-				return resultType
-			}
-		}
-		return Any
+		return c.binaryOpFromDescriptor(left, e.Op)
 	}
 
+	return Any
+}
+
+// binaryOpFromDescriptor checks the left operand's TypeDescriptor for a binary
+// operator result type. Returns Any if not found.
+func (c *Checker) binaryOpFromDescriptor(left Type, op syntax.Token) Type {
+	if desc := c.lookupDescriptor(left); desc != nil {
+		if resultType, ok := desc.BinaryOps[op]; ok {
+			return resultType
+		}
+	}
 	return Any
 }
 
@@ -247,9 +275,22 @@ func (c *Checker) unaryExprType(e *syntax.UnaryExpr) Type {
 		if x == Int || x == Float {
 			return x
 		}
+		if desc := c.lookupDescriptor(x); desc != nil {
+			if resultType, ok := desc.UnaryOps[e.Op]; ok {
+				return resultType
+			}
+		}
 		return Any
 	case syntax.TILDE:
-		return Int
+		if x == Int {
+			return Int
+		}
+		if desc := c.lookupDescriptor(x); desc != nil {
+			if resultType, ok := desc.UnaryOps[e.Op]; ok {
+				return resultType
+			}
+		}
+		return Any
 	}
 	return Any
 }
@@ -261,6 +302,14 @@ func (c *Checker) callExprType(e *syntax.CallExpr) Type {
 		c.checkCallArgs(e, callable)
 		if callable.ReturnType != nil {
 			return callable.ReturnType
+		}
+		return Any
+	}
+	// Check if extension type is callable via TypeDescriptor.
+	if desc := c.lookupDescriptor(fnType); desc != nil && desc.CallSig != nil {
+		c.checkCallArgs(e, desc.CallSig)
+		if desc.CallSig.ReturnType != nil {
+			return desc.CallSig.ReturnType
 		}
 	}
 	return Any
@@ -352,12 +401,17 @@ func (c *Checker) sliceExprType(e *syntax.SliceExpr) Type {
 	switch t := xType.(type) {
 	case *List:
 		return &List{t.Elem}
+	case *Tuple:
+		return &Tuple{Elems: t.Elems}
 	}
 	if xType == String {
 		return String
 	}
 	if xType == Bytes {
 		return Bytes
+	}
+	if desc := c.lookupDescriptor(xType); desc != nil && desc.SliceType != nil {
+		return desc.SliceType
 	}
 	return Any
 }

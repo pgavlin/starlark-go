@@ -34,13 +34,25 @@ type Env struct {
 // TypeDescriptor describes the static type information for a Go-defined
 // Starlark type.
 type TypeDescriptor struct {
+	// Read-side operations:
 	Attrs     map[string]Type       // attribute name → type (HasAttrs)
 	Methods   map[string]*Callable  // method name → signature (HasAttrs)
 	BinaryOps map[syntax.Token]Type // op → result type (HasBinary)
 	UnaryOps  map[syntax.Token]Type // op → result type (HasUnary)
 	CallSig   *Callable             // call signature if Callable
 	IndexType Type                  // result of x[i] (Indexable)
+	SliceType Type                  // result of x[i:j] (Sliceable); nil = not sliceable
 	IterElem  Type                  // element type (Iterable)
+
+	// Write-side operations:
+	SetIndexType  Type            // type accepted by x[i]=v (HasSetIndex); nil = not settable
+	KeyType       Type            // key type for mapping get/set (Mapping)
+	ValueType     Type            // value type for mapping get/set (Mapping/HasSetKey)
+	SetFieldTypes map[string]Type // field name → accepted type (HasSetField); nil = not settable
+
+	// Capabilities:
+	Comparable bool // whether values support ordering operators (<, >, <=, >=)
+	Sequence   bool // whether value is a finite-length sequence
 }
 
 // scope represents a lexical scope mapping names to bindings.
@@ -247,6 +259,8 @@ func (c *Checker) bindForVars(vars syntax.Expr, iterType Type) {
 			elemType = String
 		} else if iterType == Bytes {
 			elemType = Int
+		} else if desc := c.lookupDescriptor(iterType); desc != nil && desc.IterElem != nil {
+			elemType = desc.IterElem
 		} else {
 			elemType = Any
 		}
@@ -364,10 +378,56 @@ func (c *Checker) bindAssign(lhs syntax.Expr, rhsType Type) {
 	case *syntax.ParenExpr:
 		c.bindAssign(lhs.X, rhsType)
 	case *syntax.IndexExpr:
-		c.exprType(lhs.X)
+		xType := c.exprType(lhs.X)
 		c.exprType(lhs.Y)
+		// Validate the assigned value's type against the container's element/value type.
+		switch t := xType.(type) {
+		case *List:
+			if !Assignable(rhsType, t.Elem) {
+				pos, _ := lhs.Span()
+				c.errorf(pos, "cannot use %s as %s in list assignment", rhsType, t.Elem)
+			}
+		case *Dict:
+			if !Assignable(rhsType, t.Value) {
+				pos, _ := lhs.Span()
+				c.errorf(pos, "cannot use %s as %s in dict assignment", rhsType, t.Value)
+			}
+		default:
+			if desc := c.lookupDescriptor(xType); desc != nil {
+				if desc.ValueType != nil {
+					// Mapping-style key assignment (HasSetKey).
+					if !Assignable(rhsType, desc.ValueType) {
+						pos, _ := lhs.Span()
+						c.errorf(pos, "cannot use %s as %s", rhsType, desc.ValueType)
+					}
+				} else if desc.SetIndexType != nil {
+					// Sequence-style index assignment (HasSetIndex).
+					if !Assignable(rhsType, desc.SetIndexType) {
+						pos, _ := lhs.Span()
+						c.errorf(pos, "cannot use %s as %s", rhsType, desc.SetIndexType)
+					}
+				}
+			}
+		}
 	case *syntax.DotExpr:
-		c.exprType(lhs.X)
+		recvType := c.exprType(lhs.X)
+		name := lhs.Name.Name
+		// Validate the assigned value's type against the field's declared type.
+		if obj, ok := recvType.(*Object); ok {
+			if attrType, ok := obj.Attrs[name]; ok {
+				if !Assignable(rhsType, attrType) {
+					c.errorf(lhs.Name.NamePos, "cannot use %s as %s in field assignment", rhsType, attrType)
+				}
+			}
+		} else if desc := c.lookupDescriptor(recvType); desc != nil {
+			if desc.SetFieldTypes != nil {
+				if fieldType, ok := desc.SetFieldTypes[name]; ok {
+					if !Assignable(rhsType, fieldType) {
+						c.errorf(lhs.Name.NamePos, "cannot use %s as %s in field assignment", rhsType, fieldType)
+					}
+				}
+			}
+		}
 	}
 }
 

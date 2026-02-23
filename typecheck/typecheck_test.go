@@ -20,6 +20,11 @@ func check(t *testing.T, src string, env *typecheck.Env) []typecheck.Error {
 			if _, ok := env.Names[name]; ok {
 				return true
 			}
+			if env.TypeDescriptors != nil {
+				if _, ok := env.TypeDescriptors[name]; ok {
+					return true
+				}
+			}
 		}
 		return false
 	}, func(name string) bool {
@@ -567,6 +572,413 @@ func TestInfoOptIn(t *testing.T) {
 	}
 
 	_ = f
+}
+
+func TestUnaryOpsDescriptor(t *testing.T) {
+	env := typecheck.StandardEnv()
+	env.TypeDescriptors = map[string]*typecheck.TypeDescriptor{
+		"duration": {
+			UnaryOps: map[syntax.Token]typecheck.Type{
+				syntax.MINUS: &typecheck.Named{Name: "duration"},
+			},
+		},
+	}
+	env.Names["d"] = &typecheck.Named{Name: "duration"}
+
+	tests := []struct {
+		src     string
+		wantErr string
+	}{
+		{"x: duration = -d", ""},
+	}
+
+	for _, test := range tests {
+		errs := check(t, test.src, env)
+		if test.wantErr == "" {
+			if len(errs) > 0 {
+				t.Errorf("check(%q): unexpected errors: %v", test.src, errs)
+			}
+		} else {
+			if len(errs) == 0 {
+				t.Errorf("check(%q): expected error containing %q, got none", test.src, test.wantErr)
+			} else if !containsError(errs, test.wantErr) {
+				t.Errorf("check(%q): expected error containing %q, got %v", test.src, test.wantErr, errs)
+			}
+		}
+	}
+}
+
+func TestCallSigDescriptor(t *testing.T) {
+	env := typecheck.StandardEnv()
+	env.TypeDescriptors = map[string]*typecheck.TypeDescriptor{
+		"regex": {
+			CallSig: &typecheck.Callable{
+				Name:       "regex",
+				Params:     []typecheck.Param{{Name: "s", Type: typecheck.String}},
+				ReturnType: typecheck.Bool,
+			},
+		},
+	}
+	env.Names["pattern"] = &typecheck.Named{Name: "regex"}
+
+	tests := []struct {
+		src     string
+		wantErr string
+	}{
+		// Calling the extension type uses CallSig.
+		{"x: bool = pattern('hello')", ""},
+		{"x: int = pattern('hello')", "cannot use bool as int"},
+		// Wrong argument type.
+		{"pattern(42)", "cannot use int as string"},
+	}
+
+	for _, test := range tests {
+		errs := check(t, test.src, env)
+		if test.wantErr == "" {
+			if len(errs) > 0 {
+				t.Errorf("check(%q): unexpected errors: %v", test.src, errs)
+			}
+		} else {
+			if len(errs) == 0 {
+				t.Errorf("check(%q): expected error containing %q, got none", test.src, test.wantErr)
+			} else if !containsError(errs, test.wantErr) {
+				t.Errorf("check(%q): expected error containing %q, got %v", test.src, test.wantErr, errs)
+			}
+		}
+	}
+}
+
+func TestIterElemDescriptor(t *testing.T) {
+	env := typecheck.StandardEnv()
+	env.TypeDescriptors = map[string]*typecheck.TypeDescriptor{
+		"strset": {
+			IterElem: typecheck.String,
+		},
+	}
+	env.Names["ss"] = &typecheck.Named{Name: "strset"}
+
+	tests := []struct {
+		src     string
+		wantErr string
+	}{
+		{"def f():\n  for x in ss:\n    y: str = x", ""},
+		{"def f():\n  for x in ss:\n    y: int = x", "cannot use string as int"},
+	}
+
+	for _, test := range tests {
+		errs := check(t, test.src, env)
+		if test.wantErr == "" {
+			if len(errs) > 0 {
+				t.Errorf("check(%q): unexpected errors: %v", test.src, errs)
+			}
+		} else {
+			if len(errs) == 0 {
+				t.Errorf("check(%q): expected error containing %q, got none", test.src, test.wantErr)
+			} else if !containsError(errs, test.wantErr) {
+				t.Errorf("check(%q): expected error containing %q, got %v", test.src, test.wantErr, errs)
+			}
+		}
+	}
+}
+
+func TestSliceTypeDescriptor(t *testing.T) {
+	env := typecheck.StandardEnv()
+	env.TypeDescriptors = map[string]*typecheck.TypeDescriptor{
+		"buffer": {
+			SliceType: &typecheck.Named{Name: "buffer"},
+			IndexType: typecheck.Int,
+		},
+	}
+	env.Names["buf"] = &typecheck.Named{Name: "buffer"}
+
+	tests := []struct {
+		src     string
+		wantErr string
+	}{
+		{"x: buffer = buf[1:3]", ""},
+		{"x: int = buf[0]", ""},
+		{"x: str = buf[1:3]", "cannot use buffer as string"},
+	}
+
+	for _, test := range tests {
+		errs := check(t, test.src, env)
+		if test.wantErr == "" {
+			if len(errs) > 0 {
+				t.Errorf("check(%q): unexpected errors: %v", test.src, errs)
+			}
+		} else {
+			if len(errs) == 0 {
+				t.Errorf("check(%q): expected error containing %q, got none", test.src, test.wantErr)
+			} else if !containsError(errs, test.wantErr) {
+				t.Errorf("check(%q): expected error containing %q, got %v", test.src, test.wantErr, errs)
+			}
+		}
+	}
+}
+
+func TestBinaryOpsAllOperators(t *testing.T) {
+	env := typecheck.StandardEnv()
+	env.TypeDescriptors = map[string]*typecheck.TypeDescriptor{
+		"vec": {
+			BinaryOps: map[syntax.Token]typecheck.Type{
+				syntax.PLUS:  &typecheck.Named{Name: "vec"},
+				syntax.MINUS: &typecheck.Named{Name: "vec"},
+				syntax.STAR:  &typecheck.Named{Name: "vec"},
+			},
+		},
+	}
+	env.Names["v"] = &typecheck.Named{Name: "vec"}
+
+	tests := []struct {
+		src     string
+		wantErr string
+	}{
+		{"x: vec = v + v", ""},
+		{"x: vec = v - v", ""},
+		{"x: vec = v * v", ""},
+		{"x: str = v + v", "cannot use vec as string"},
+	}
+
+	for _, test := range tests {
+		errs := check(t, test.src, env)
+		if test.wantErr == "" {
+			if len(errs) > 0 {
+				t.Errorf("check(%q): unexpected errors: %v", test.src, errs)
+			}
+		} else {
+			if len(errs) == 0 {
+				t.Errorf("check(%q): expected error containing %q, got none", test.src, test.wantErr)
+			} else if !containsError(errs, test.wantErr) {
+				t.Errorf("check(%q): expected error containing %q, got %v", test.src, test.wantErr, errs)
+			}
+		}
+	}
+}
+
+func TestSetIndexTypeDescriptor(t *testing.T) {
+	env := typecheck.StandardEnv()
+	env.TypeDescriptors = map[string]*typecheck.TypeDescriptor{
+		"intarray": {
+			IndexType:    typecheck.Int,
+			SetIndexType: typecheck.Int,
+		},
+	}
+	env.Names["arr"] = &typecheck.Named{Name: "intarray"}
+
+	tests := []struct {
+		src     string
+		wantErr string
+	}{
+		{"arr[0] = 5", ""},
+		{"arr[0] = 'x'", "cannot use string as int"},
+	}
+
+	for _, test := range tests {
+		errs := check(t, test.src, env)
+		if test.wantErr == "" {
+			if len(errs) > 0 {
+				t.Errorf("check(%q): unexpected errors: %v", test.src, errs)
+			}
+		} else {
+			if len(errs) == 0 {
+				t.Errorf("check(%q): expected error containing %q, got none", test.src, test.wantErr)
+			} else if !containsError(errs, test.wantErr) {
+				t.Errorf("check(%q): expected error containing %q, got %v", test.src, test.wantErr, errs)
+			}
+		}
+	}
+}
+
+func TestMappingKeyValueDescriptor(t *testing.T) {
+	env := typecheck.StandardEnv()
+	env.TypeDescriptors = map[string]*typecheck.TypeDescriptor{
+		"config": {
+			KeyType:   typecheck.String,
+			ValueType: typecheck.String,
+			IndexType: typecheck.String,
+		},
+	}
+	env.Names["cfg"] = &typecheck.Named{Name: "config"}
+
+	tests := []struct {
+		src     string
+		wantErr string
+	}{
+		{"cfg['key'] = 'value'", ""},
+		{"cfg['key'] = 42", "cannot use int as string"},
+		{"x: str = cfg['key']", ""},
+	}
+
+	for _, test := range tests {
+		errs := check(t, test.src, env)
+		if test.wantErr == "" {
+			if len(errs) > 0 {
+				t.Errorf("check(%q): unexpected errors: %v", test.src, errs)
+			}
+		} else {
+			if len(errs) == 0 {
+				t.Errorf("check(%q): expected error containing %q, got none", test.src, test.wantErr)
+			} else if !containsError(errs, test.wantErr) {
+				t.Errorf("check(%q): expected error containing %q, got %v", test.src, test.wantErr, errs)
+			}
+		}
+	}
+}
+
+func TestSetFieldTypesDescriptor(t *testing.T) {
+	env := typecheck.StandardEnv()
+	env.TypeDescriptors = map[string]*typecheck.TypeDescriptor{
+		"point": {
+			Attrs: map[string]typecheck.Type{
+				"x": typecheck.Int,
+				"y": typecheck.Int,
+			},
+			SetFieldTypes: map[string]typecheck.Type{
+				"x": typecheck.Int,
+				"y": typecheck.Int,
+			},
+		},
+	}
+	env.Names["p"] = &typecheck.Named{Name: "point"}
+
+	tests := []struct {
+		src     string
+		wantErr string
+	}{
+		{"p.x = 5", ""},
+		{"p.y = 10", ""},
+		{"p.x = 'hi'", "cannot use string as int in field assignment"},
+		// Reading attrs still works.
+		{"z: int = p.x", ""},
+		{"z: str = p.x", "cannot use int as string"},
+	}
+
+	for _, test := range tests {
+		errs := check(t, test.src, env)
+		if test.wantErr == "" {
+			if len(errs) > 0 {
+				t.Errorf("check(%q): unexpected errors: %v", test.src, errs)
+			}
+		} else {
+			if len(errs) == 0 {
+				t.Errorf("check(%q): expected error containing %q, got none", test.src, test.wantErr)
+			} else if !containsError(errs, test.wantErr) {
+				t.Errorf("check(%q): expected error containing %q, got %v", test.src, test.wantErr, errs)
+			}
+		}
+	}
+}
+
+func TestComparableDescriptor(t *testing.T) {
+	env := typecheck.StandardEnv()
+	env.TypeDescriptors = map[string]*typecheck.TypeDescriptor{
+		"ordered": {
+			Comparable: true,
+		},
+		"unordered": {
+			Comparable: false,
+		},
+	}
+	env.Names["a"] = &typecheck.Named{Name: "ordered"}
+	env.Names["b"] = &typecheck.Named{Name: "unordered"}
+
+	tests := []struct {
+		src     string
+		wantErr string
+	}{
+		// Equality is always allowed.
+		{"x = a == a", ""},
+		{"x = b == b", ""},
+		{"x = b != b", ""},
+		// Ordering is allowed for comparable types.
+		{"x = a < a", ""},
+		{"x = a >= a", ""},
+		// Ordering is not allowed for non-comparable types.
+		{"x = b < b", "does not support"},
+		{"x = b > b", "does not support"},
+		{"x = b <= b", "does not support"},
+		{"x = b >= b", "does not support"},
+	}
+
+	for _, test := range tests {
+		errs := check(t, test.src, env)
+		if test.wantErr == "" {
+			if len(errs) > 0 {
+				t.Errorf("check(%q): unexpected errors: %v", test.src, errs)
+			}
+		} else {
+			if len(errs) == 0 {
+				t.Errorf("check(%q): expected error containing %q, got none", test.src, test.wantErr)
+			} else if !containsError(errs, test.wantErr) {
+				t.Errorf("check(%q): expected error containing %q, got %v", test.src, test.wantErr, errs)
+			}
+		}
+	}
+}
+
+func TestIndexAssignmentBuiltins(t *testing.T) {
+	tests := []struct {
+		src     string
+		wantErr string
+	}{
+		// List index assignment.
+		{"xs = [1, 2, 3]\nxs[0] = 5", ""},
+		{"xs = [1, 2, 3]\nxs[0] = 'hi'", "cannot use string as int in list assignment"},
+		// Dict key assignment.
+		{"d = {'a': 1}\nd['b'] = 2", ""},
+		{"d = {'a': 1}\nd['b'] = 'hi'", "cannot use string as int in dict assignment"},
+	}
+
+	for _, test := range tests {
+		errs := check(t, test.src, nil)
+		if test.wantErr == "" {
+			if len(errs) > 0 {
+				t.Errorf("check(%q): unexpected errors: %v", test.src, errs)
+			}
+		} else {
+			if len(errs) == 0 {
+				t.Errorf("check(%q): expected error containing %q, got none", test.src, test.wantErr)
+			} else if !containsError(errs, test.wantErr) {
+				t.Errorf("check(%q): expected error containing %q, got %v", test.src, test.wantErr, errs)
+			}
+		}
+	}
+}
+
+func TestFieldAssignmentObject(t *testing.T) {
+	env := typecheck.StandardEnv()
+	env.Names["obj"] = &typecheck.Object{
+		Name: "myobj",
+		Attrs: map[string]typecheck.Type{
+			"name": typecheck.String,
+			"age":  typecheck.Int,
+		},
+	}
+
+	tests := []struct {
+		src     string
+		wantErr string
+	}{
+		{"obj.name = 'alice'", ""},
+		{"obj.age = 30", ""},
+		{"obj.name = 42", "cannot use int as string in field assignment"},
+		{"obj.age = 'old'", "cannot use string as int in field assignment"},
+	}
+
+	for _, test := range tests {
+		errs := check(t, test.src, env)
+		if test.wantErr == "" {
+			if len(errs) > 0 {
+				t.Errorf("check(%q): unexpected errors: %v", test.src, errs)
+			}
+		} else {
+			if len(errs) == 0 {
+				t.Errorf("check(%q): expected error containing %q, got none", test.src, test.wantErr)
+			} else if !containsError(errs, test.wantErr) {
+				t.Errorf("check(%q): expected error containing %q, got %v", test.src, test.wantErr, errs)
+			}
+		}
+	}
 }
 
 func TestLoadCallback(t *testing.T) {
