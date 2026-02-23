@@ -1330,3 +1330,158 @@ func TestReassignmentBindings(t *testing.T) {
 		t.Errorf("use2.Type = %v, want string", use2.Type)
 	}
 }
+
+func TestAllowSet(t *testing.T) {
+	old := resolve.AllowSet
+	resolve.AllowSet = true
+	defer func() { resolve.AllowSet = old }()
+
+	tests := []struct {
+		name    string
+		src     string
+		wantErr string
+	}{
+		{
+			name:    "set constructor ok",
+			src:     "x: set = set([1, 2, 3])",
+			wantErr: "",
+		},
+		{
+			name:    "set constructor type error",
+			src:     "x: int = set([1, 2, 3])",
+			wantErr: "cannot use set",
+		},
+		{
+			name:    "for over set",
+			src:     "def f(s: set):\n  for x in s:\n    pass",
+			wantErr: "",
+		},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			errs := check(t, test.src, nil)
+			if test.wantErr == "" {
+				if len(errs) > 0 {
+					t.Errorf("unexpected errors: %v", errs)
+				}
+			} else {
+				if len(errs) == 0 {
+					t.Errorf("expected error containing %q, got none", test.wantErr)
+				} else if !containsError(errs, test.wantErr) {
+					t.Errorf("expected error containing %q, got %v", test.wantErr, errs)
+				}
+			}
+		})
+	}
+}
+
+func TestAllowGlobalReassign(t *testing.T) {
+	old := resolve.AllowGlobalReassign
+	resolve.AllowGlobalReassign = true
+	defer func() { resolve.AllowGlobalReassign = old }()
+
+	tests := []struct {
+		name    string
+		src     string
+		wantErr string
+	}{
+		{
+			name:    "top-level if, type preserved",
+			src:     "x = 4\nif True:\n  y = 5\nz: int = x",
+			wantErr: "",
+		},
+		{
+			name:    "top-level if, type merged",
+			src:     "x = 4\nif True:\n  x = 'hello'\ny: int = x",
+			wantErr: "cannot use",
+		},
+		{
+			name:    "top-level if/else",
+			src:     "x = 4\nif True:\n  x = 'hi'\nelse:\n  x = 1.5\ny: int = x",
+			wantErr: "cannot use",
+		},
+		{
+			name:    "top-level for loop",
+			src:     "xs = [1, 2, 3]\nx = 'hello'\nfor i in xs:\n  x = i\ny: str = x",
+			wantErr: "cannot use",
+		},
+		{
+			name:    "top-level reassign",
+			src:     "x = 4\nx = 'hello'\ny: int = x",
+			wantErr: "cannot use string as int",
+		},
+		{
+			name:    "top-level reassign, declared",
+			src:     "x: int = 4\nx = 'hello'",
+			wantErr: "cannot use string as int",
+		},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			errs := check(t, test.src, nil)
+			if test.wantErr == "" {
+				if len(errs) > 0 {
+					t.Errorf("unexpected errors: %v", errs)
+				}
+			} else {
+				if len(errs) == 0 {
+					t.Errorf("expected error containing %q, got none", test.wantErr)
+				} else if !containsError(errs, test.wantErr) {
+					t.Errorf("expected error containing %q, got %v", test.wantErr, errs)
+				}
+			}
+		})
+	}
+}
+
+func TestAllowRecursion(t *testing.T) {
+	old := resolve.AllowRecursion
+	resolve.AllowRecursion = true
+	defer func() { resolve.AllowRecursion = old }()
+
+	tests := []struct {
+		name    string
+		src     string
+		wantErr string
+	}{
+		{
+			name:    "while loop basic",
+			src:     "def f():\n  x: int = 0\n  while x:\n    x = 1\n  y: int = x",
+			wantErr: "",
+		},
+		{
+			name:    "while loop type merge",
+			src:     "def f():\n  x = 4\n  while True:\n    x = 'hello'\n  y: int = x",
+			wantErr: "cannot use",
+		},
+		{
+			name:    "recursive function types",
+			src:     "def fact(n: int) -> int:\n  if n:\n    return n\n  return 1",
+			wantErr: "",
+		},
+		{
+			name:    "while with break",
+			src:     "def f():\n  x = 4\n  while True:\n    x = 'hello'\n    break\n  y: int = x",
+			wantErr: "cannot use",
+		},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			errs := check(t, test.src, nil)
+			if test.wantErr == "" {
+				if len(errs) > 0 {
+					t.Errorf("unexpected errors: %v", errs)
+				}
+			} else {
+				if len(errs) == 0 {
+					t.Errorf("expected error containing %q, got none", test.wantErr)
+				} else if !containsError(errs, test.wantErr) {
+					t.Errorf("expected error containing %q, got %v", test.wantErr, errs)
+				}
+			}
+		})
+	}
+}
