@@ -250,35 +250,7 @@ func (c *Checker) stmt(stmt syntax.Stmt) {
 }
 
 func (c *Checker) bindForVars(vars syntax.Expr, iterType Type) {
-	// Extract element type from iterable.
-	var elemType Type
-	switch t := iterType.(type) {
-	case *List:
-		elemType = t.Elem
-	case *Dict:
-		elemType = t.Key
-	case *Set:
-		elemType = t.Elem
-	case *Tuple:
-		if len(t.Elems) > 0 {
-			elemType = t.Elems[0]
-			for _, el := range t.Elems[1:] {
-				elemType = c.unify(elemType, el)
-			}
-		} else {
-			elemType = Any
-		}
-	default:
-		if iterType == String {
-			elemType = String
-		} else if iterType == Bytes {
-			elemType = Int
-		} else if it, ok := iterType.(IterableType); ok && it.IterElemType() != nil {
-			elemType = it.IterElemType()
-		} else {
-			elemType = Any
-		}
-	}
+	elemType := c.iterElemType(iterType)
 
 	switch v := vars.(type) {
 	case *syntax.Ident:
@@ -291,6 +263,54 @@ func (c *Checker) bindForVars(vars syntax.Expr, iterType Type) {
 		}
 	case *syntax.ParenExpr:
 		c.bindForVars(v.X, iterType)
+	}
+}
+
+// iterElemType returns the element type of an iterable type.
+// For unions, it distributes across members and unifies results.
+func (c *Checker) iterElemType(t Type) Type {
+	if u, ok := t.(*Union); ok {
+		var result Type
+		for _, member := range u.Types {
+			rt := c.iterElemType(member)
+			if result == nil {
+				result = rt
+			} else {
+				result = c.unify(result, rt)
+			}
+		}
+		if result != nil {
+			return result
+		}
+		return Any
+	}
+	switch t := t.(type) {
+	case *List:
+		return t.Elem
+	case *Dict:
+		return t.Key
+	case *Set:
+		return t.Elem
+	case *Tuple:
+		if len(t.Elems) > 0 {
+			result := t.Elems[0]
+			for _, el := range t.Elems[1:] {
+				result = c.unify(result, el)
+			}
+			return result
+		}
+		return Any
+	default:
+		if t == String {
+			return String
+		}
+		if t == Bytes {
+			return Int
+		}
+		if it, ok := t.(IterableType); ok && it.IterElemType() != nil {
+			return it.IterElemType()
+		}
+		return Any
 	}
 }
 

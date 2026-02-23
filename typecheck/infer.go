@@ -314,6 +314,24 @@ func (c *Checker) unaryExprType(e *syntax.UnaryExpr) Type {
 
 func (c *Checker) callExprType(e *syntax.CallExpr) Type {
 	fnType := c.exprType(e.Fn)
+
+	// For union callables, unify return types without arg checking.
+	if u, ok := fnType.(*Union); ok {
+		var result Type
+		for _, member := range u.Types {
+			rt := c.callableReturnType(member)
+			if result == nil {
+				result = rt
+			} else {
+				result = c.unify(result, rt)
+			}
+		}
+		if result != nil {
+			return result
+		}
+		return Any
+	}
+
 	if callable, ok := fnType.(*Callable); ok {
 		// Check argument types.
 		c.checkCallArgs(e, callable)
@@ -334,22 +352,29 @@ func (c *Checker) callExprType(e *syntax.CallExpr) Type {
 	return Any
 }
 
+// callableReturnType extracts the return type from a callable type
+// without performing argument checking.
+func (c *Checker) callableReturnType(t Type) Type {
+	if callable, ok := t.(*Callable); ok {
+		if callable.ReturnType != nil {
+			return callable.ReturnType
+		}
+		return Any
+	}
+	if ct, ok := t.(CallableType); ok {
+		if sig := ct.CallSignature(); sig != nil && sig.ReturnType != nil {
+			return sig.ReturnType
+		}
+	}
+	return Any
+}
+
 func (c *Checker) dotExprType(e *syntax.DotExpr) Type {
 	recvType := c.exprType(e.X)
 	name := e.Name.Name
 
-	// Try built-in method tables.
-	if methods := c.builtinMethods(recvType); methods != nil {
-		if m, ok := methods[name]; ok {
-			return m
-		}
-	}
-
-	// Try HasAttrsType (covers Object, Named, and other types with attrs).
-	if hat, ok := recvType.(HasAttrsType); ok {
-		if t := hat.AttrType(name); t != nil {
-			return t
-		}
+	if result := c.attrResultType(recvType, name); result != nil {
+		return result
 	}
 
 	// Report error for known types without the attribute.
@@ -360,17 +385,89 @@ func (c *Checker) dotExprType(e *syntax.DotExpr) Type {
 	return Any
 }
 
+// attrResultType returns the type of attribute name on type t, or nil if not found.
+// For unions, all members must have the attribute; returns nil if any member lacks it.
+// For Any and Named (unknown) types, returns Any (not nil) to preserve permissive behavior.
+func (c *Checker) attrResultType(t Type, name string) Type {
+	if t == Any {
+		return Any
+	}
+	if u, ok := t.(*Union); ok {
+		var result Type
+		for _, member := range u.Types {
+			rt := c.attrResultType(member, name)
+			if rt == nil {
+				return nil // member lacks attribute
+			}
+			if result == nil {
+				result = rt
+			} else {
+				result = c.unify(result, rt)
+			}
+		}
+		return result
+	}
+
+	// Try built-in method tables.
+	if methods := c.builtinMethods(t); methods != nil {
+		if m, ok := methods[name]; ok {
+			return m
+		}
+	}
+
+	// Try HasAttrsType (covers Object, Named, and other types with attrs).
+	if hat, ok := t.(HasAttrsType); ok {
+		if at := hat.AttrType(name); at != nil {
+			return at
+		}
+	}
+
+	// Named types are unknown — return Any to suppress errors.
+	if isUnknownType(t) {
+		return Any
+	}
+
+	return nil
+}
+
 func isUnknownType(t Type) bool {
-	switch t.(type) {
+	switch t := t.(type) {
 	case *Named:
 		return true
+	case *Union:
+		for _, member := range t.Types {
+			if isUnknownType(member) {
+				return true
+			}
+		}
 	}
 	return false
 }
 
 func (c *Checker) indexExprType(e *syntax.IndexExpr) Type {
 	xType := c.exprType(e.X)
-	switch t := xType.(type) {
+	return c.indexResultType(xType)
+}
+
+// indexResultType returns the element type when indexing into t.
+// For unions, it distributes across members and unifies results.
+func (c *Checker) indexResultType(t Type) Type {
+	if u, ok := t.(*Union); ok {
+		var result Type
+		for _, member := range u.Types {
+			rt := c.indexResultType(member)
+			if result == nil {
+				result = rt
+			} else {
+				result = c.unify(result, rt)
+			}
+		}
+		if result != nil {
+			return result
+		}
+		return Any
+	}
+	switch t := t.(type) {
 	case *List:
 		return t.Elem
 	case *Dict:
@@ -387,16 +484,16 @@ func (c *Checker) indexExprType(e *syntax.IndexExpr) Type {
 		}
 		return Any
 	}
-	if xType == String {
+	if t == String {
 		return String
 	}
-	if xType == Bytes {
+	if t == Bytes {
 		return Int
 	}
 	// Check IndexableType interface.
-	if it, ok := xType.(IndexableType); ok {
-		if t := it.ElemType(); t != nil {
-			return t
+	if it, ok := t.(IndexableType); ok {
+		if et := it.ElemType(); et != nil {
+			return et
 		}
 	}
 	return Any
@@ -404,21 +501,42 @@ func (c *Checker) indexExprType(e *syntax.IndexExpr) Type {
 
 func (c *Checker) sliceExprType(e *syntax.SliceExpr) Type {
 	xType := c.exprType(e.X)
-	switch t := xType.(type) {
+	return c.sliceResultType(xType)
+}
+
+// sliceResultType returns the type resulting from slicing t.
+// For unions, it distributes across members and unifies results.
+func (c *Checker) sliceResultType(t Type) Type {
+	if u, ok := t.(*Union); ok {
+		var result Type
+		for _, member := range u.Types {
+			rt := c.sliceResultType(member)
+			if result == nil {
+				result = rt
+			} else {
+				result = c.unify(result, rt)
+			}
+		}
+		if result != nil {
+			return result
+		}
+		return Any
+	}
+	switch t := t.(type) {
 	case *List:
 		return &List{t.Elem}
 	case *Tuple:
 		return &Tuple{Elems: t.Elems}
 	}
-	if xType == String {
+	if t == String {
 		return String
 	}
-	if xType == Bytes {
+	if t == Bytes {
 		return Bytes
 	}
-	if st, ok := xType.(SliceableType); ok {
-		if t := st.SliceResultType(); t != nil {
-			return t
+	if st, ok := t.(SliceableType); ok {
+		if rt := st.SliceResultType(); rt != nil {
+			return rt
 		}
 	}
 	return Any

@@ -1563,3 +1563,89 @@ func TestElementTypeWidening(t *testing.T) {
 		})
 	}
 }
+
+func TestUnionOperations(t *testing.T) {
+	tests := []struct {
+		name    string
+		src     string
+		wantErr string
+	}{
+		// Index union of lists — element is int | str, not assignable to int.
+		{
+			name:    "index union of lists error",
+			src:     "def f(x: list[int] | list[str]):\n  y: int = x[0]",
+			wantErr: "cannot use",
+		},
+		// Index union of lists — element is int | str, assignable to int | str.
+		{
+			name:    "index union of lists ok",
+			src:     "def f(x: list[int] | list[str]):\n  y: int | str = x[0]",
+			wantErr: "",
+		},
+		// Index union of list and dict.
+		{
+			name:    "index union of list and dict",
+			src:     "def f(x: list[int] | dict[str, bool]):\n  y: int | bool = x[0]",
+			wantErr: "",
+		},
+		// Slice union of list and str — result is list[int] | str.
+		{
+			name:    "slice union error",
+			src:     "def f(x: list[int] | str):\n  y: list[int] = x[1:3]",
+			wantErr: "cannot use",
+		},
+		// Slice union ok.
+		{
+			name:    "slice union ok",
+			src:     "def f(x: list[int] | str):\n  y: list[int] | str = x[1:3]",
+			wantErr: "",
+		},
+		// For over union of lists — element is int | str.
+		{
+			name:    "for over union of lists error",
+			src:     "def f(x: list[int] | list[str]):\n  for item in x:\n    y: int = item",
+			wantErr: "cannot use",
+		},
+		// For over union of lists ok.
+		{
+			name:    "for over union of lists ok",
+			src:     "def f(x: list[int] | list[str]):\n  for item in x:\n    y: int | str = item",
+			wantErr: "",
+		},
+		// Attribute on union — missing on one member.
+		{
+			name:    "method on union missing attr",
+			src:     "def f(x: str | int):\n  y = x.upper()",
+			wantErr: "has no attribute upper",
+		},
+		// Call union of callables — return is str | int.
+		{
+			name:    "call union of callables error",
+			src:     "def f(a: int) -> str:\n  return str(a)\ndef g(a: int) -> int:\n  return a\ndef h(c: bool):\n  fn = f if c else g\n  y: str = fn(1)",
+			wantErr: "cannot use",
+		},
+		// Call union of callables ok.
+		{
+			name:    "call union of callables ok",
+			src:     "def f(a: int) -> str:\n  return str(a)\ndef g(a: int) -> int:\n  return a\ndef h(c: bool):\n  fn = f if c else g\n  y: str | int = fn(1)",
+			wantErr: "",
+		},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			errs := check(t, test.src, nil)
+			if test.wantErr == "" {
+				if len(errs) > 0 {
+					t.Errorf("unexpected errors: %v", errs)
+				}
+			} else {
+				if len(errs) == 0 {
+					t.Errorf("expected error containing %q, got none", test.wantErr)
+				} else if !containsError(errs, test.wantErr) {
+					t.Errorf("expected error containing %q, got %v", test.wantErr, errs)
+				}
+			}
+		})
+	}
+}
