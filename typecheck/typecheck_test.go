@@ -1067,3 +1067,37 @@ func TestLoadCallback(t *testing.T) {
 		})
 	}
 }
+
+func TestUntypedReassignment(t *testing.T) {
+	tests := []struct {
+		src     string
+		wantErr string
+	}{
+		// Untyped variables can be reassigned to any type.
+		{"def f():\n  x = 5\n  x = 'hello'", ""},
+		{"def f():\n  x = 'hello'\n  x = 5", ""},
+		{"def f():\n  x = [1,2,3]\n  x = 'hello'", ""},
+		// Typed variables cannot be reassigned to a different type.
+		{"def f():\n  x: int = 5\n  x = 'hello'", "cannot use string as int"},
+		{"def f():\n  x: str = 'hi'\n  x = 5", "cannot use int as string"},
+		// Augmented assignment on untyped variables is OK if the op is valid.
+		{"def f():\n  x = 5\n  x += 1", ""},
+		// Augmented assignment on typed variables checks the result type.
+		{"def f():\n  x: int = 5\n  x += 1", ""},
+	}
+
+	for _, test := range tests {
+		errs := check(t, test.src, nil)
+		if test.wantErr == "" {
+			if len(errs) > 0 {
+				t.Errorf("check(%q): unexpected errors: %v", test.src, errs)
+			}
+		} else {
+			if len(errs) == 0 {
+				t.Errorf("check(%q): expected error containing %q, got none", test.src, test.wantErr)
+			} else if !containsError(errs, test.wantErr) {
+				t.Errorf("check(%q): expected error containing %q, got %v", test.src, test.wantErr, errs)
+			}
+		}
+	}
+}

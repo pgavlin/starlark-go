@@ -223,7 +223,8 @@ func (c *Checker) checkAssignStmt(s *syntax.AssignStmt) {
 				}
 			}
 			if id, ok := s.LHS.(*syntax.Ident); ok {
-				c.define(id, declaredType)
+				b := c.define(id, declaredType)
+				b.Declared = true
 			}
 		} else if s.RHS != nil {
 			// Simple assignment: x = expr
@@ -237,7 +238,7 @@ func (c *Checker) checkAssignStmt(s *syntax.AssignStmt) {
 			rhsType := c.exprType(s.RHS)
 			// Check if the existing variable has a declared type.
 			if id, ok := s.LHS.(*syntax.Ident); ok {
-				if b := c.lookupBinding(id); b != nil && b.Type != Any {
+				if b := c.lookupBinding(id); b != nil && b.Declared && b.Type != Any {
 					// Check that the result is assignable.
 					resultType := c.binaryExprType(&syntax.BinaryExpr{
 						X:  s.LHS,
@@ -287,7 +288,7 @@ func (c *Checker) bindAssign(lhs syntax.Expr, rhsType Type) {
 	switch lhs := lhs.(type) {
 	case *syntax.Ident:
 		// Check if the variable was previously declared with a type.
-		if b := c.lookupBinding(lhs); b != nil && b.Type != Any {
+		if b := c.lookupBinding(lhs); b != nil && b.Declared && b.Type != Any {
 			if !Assignable(rhsType, b.Type) {
 				c.errorf(lhs.NamePos, "cannot use %s as %s", rhsType, b.Type)
 			}
@@ -399,11 +400,13 @@ func (c *Checker) defineParam(param syntax.Expr) {
 		typ := c.evalType(p.Type)
 		switch inner := p.X.(type) {
 		case *syntax.Ident:
-			c.define(inner, typ)
+			b := c.define(inner, typ)
+			b.Declared = true
 		case *syntax.UnaryExpr:
 			if inner.X != nil {
 				if id, ok := inner.X.(*syntax.Ident); ok {
-					c.define(id, typ)
+					b := c.define(id, typ)
+					b.Declared = true
 				}
 			}
 		}
@@ -413,14 +416,17 @@ func (c *Checker) defineParam(param syntax.Expr) {
 			// param = default  or  param: type = default
 			x := p.X
 			var typ Type
+			var declared bool
 			if ta, ok := x.(*syntax.TypeAnnotatedExpr); ok {
 				typ = c.evalType(ta.Type)
 				x = ta.X
+				declared = true
 			} else {
 				typ = Any
 			}
 			if id, ok := x.(*syntax.Ident); ok {
-				c.define(id, typ)
+				b := c.define(id, typ)
+				b.Declared = declared
 			}
 		}
 

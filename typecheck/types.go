@@ -356,9 +356,10 @@ type TypeAndValue struct {
 // Binding represents a named Starlark entity such as a variable,
 // function, parameter, or predeclared name.
 type Binding struct {
-	Pos  syntax.Position // definition position (zero for predeclared)
-	Name string
-	Type Type
+	Pos      syntax.Position // definition position (zero for predeclared)
+	Name     string
+	Type     Type
+	Declared bool // true if type was set by an explicit annotation
 }
 
 // Info holds the type information resulting from type-checking a Starlark file.
