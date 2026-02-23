@@ -257,109 +257,162 @@ type Named interface {
 	Name() string
 }
 
-// NamedType is a convenience implementation of Named with optional typed capabilities.
-type NamedType struct {
-	TypeName   string
-	Attrs      map[string]Type
-	BinaryOps  map[syntax.Token]Type
-	UnaryOps   map[syntax.Token]Type
-	CallSig    *Callable
-	Index      Type            // ElemType for x[i]
-	Slice      Type            // result of x[i:j]
-	IterElem   Type            // element type for iteration
-	SetIndex   Type            // accepted type for x[i]=v (sequence-style)
-	SetKey     Type            // accepted value type for x[k]=v (mapping-style)
-	SetFields  map[string]Type // accepted types for x.field=v
-	Comparable *bool           // nil=unknown (assume comparable), &true=ordered, &false=not ordered
+// NamedOption configures a Named type created by NewNamed.
+type NamedOption func(*namedType)
+
+// NewNamed returns a Named type with the given name, configured by the provided options.
+func NewNamed(name string, opts ...NamedOption) Named {
+	n := &namedType{name: name}
+	for _, opt := range opts {
+		opt(n)
+	}
+	return n
 }
 
-func (t *NamedType) Name() string   { return t.TypeName }
-func (t *NamedType) String() string { return t.TypeName }
-func (t *NamedType) typeNode()      {}
+// WithAttrs configures attributes on a Named type.
+func WithAttrs(attrs map[string]Type) NamedOption {
+	return func(n *namedType) { n.attrs = attrs }
+}
 
-// AttrType implements HasAttrsType.
-func (t *NamedType) AttrType(name string) Type {
-	if t.Attrs != nil {
-		if typ, ok := t.Attrs[name]; ok {
+// WithBinaryOps configures binary operator result types on a Named type.
+func WithBinaryOps(ops map[syntax.Token]Type) NamedOption {
+	return func(n *namedType) { n.binaryOps = ops }
+}
+
+// WithUnaryOps configures unary operator result types on a Named type.
+func WithUnaryOps(ops map[syntax.Token]Type) NamedOption {
+	return func(n *namedType) { n.unaryOps = ops }
+}
+
+// WithCallSignature configures the call signature on a Named type.
+func WithCallSignature(sig *Callable) NamedOption {
+	return func(n *namedType) { n.callSig = sig }
+}
+
+// WithIndex configures the element type for indexing (x[i]) on a Named type.
+func WithIndex(elem Type) NamedOption {
+	return func(n *namedType) { n.index = elem }
+}
+
+// WithSlice configures the result type for slicing (x[i:j]) on a Named type.
+func WithSlice(result Type) NamedOption {
+	return func(n *namedType) { n.slice = result }
+}
+
+// WithIterElem configures the element type for iteration on a Named type.
+func WithIterElem(elem Type) NamedOption {
+	return func(n *namedType) { n.iterElem = elem }
+}
+
+// WithSetIndex configures the accepted type for index assignment (x[i]=v) on a Named type.
+func WithSetIndex(elem Type) NamedOption {
+	return func(n *namedType) { n.setIndex = elem }
+}
+
+// WithSetKey configures the accepted value type for key assignment (x[k]=v) on a Named type.
+func WithSetKey(val Type) NamedOption {
+	return func(n *namedType) { n.setKey = val }
+}
+
+// WithSetFields configures the accepted types for field assignment (x.f=v) on a Named type.
+func WithSetFields(fields map[string]Type) NamedOption {
+	return func(n *namedType) { n.setFields = fields }
+}
+
+// WithComparable configures whether ordering comparisons are supported on a Named type.
+func WithComparable(ordered bool) NamedOption {
+	return func(n *namedType) { n.comparable = &ordered }
+}
+
+type namedType struct {
+	name       string
+	attrs      map[string]Type
+	binaryOps  map[syntax.Token]Type
+	unaryOps   map[syntax.Token]Type
+	callSig    *Callable
+	index      Type
+	slice      Type
+	iterElem   Type
+	setIndex   Type
+	setKey     Type
+	setFields  map[string]Type
+	comparable *bool
+}
+
+func (t *namedType) Name() string   { return t.name }
+func (t *namedType) String() string { return t.name }
+func (t *namedType) typeNode()      {}
+
+func (t *namedType) AttrType(name string) Type {
+	if t.attrs != nil {
+		if typ, ok := t.attrs[name]; ok {
 			return typ
 		}
 	}
 	return nil
 }
 
-// AttrNames implements HasAttrsType.
-func (t *NamedType) AttrNames() []string {
-	names := make([]string, 0, len(t.Attrs))
-	for name := range t.Attrs {
+func (t *namedType) AttrNames() []string {
+	names := make([]string, 0, len(t.attrs))
+	for name := range t.attrs {
 		names = append(names, name)
 	}
 	return names
 }
 
-// SetFieldType implements HasSetFieldType.
-func (t *NamedType) SetFieldType(name string) Type {
-	if t.SetFields != nil {
-		if typ, ok := t.SetFields[name]; ok {
+func (t *namedType) SetFieldType(name string) Type {
+	if t.setFields != nil {
+		if typ, ok := t.setFields[name]; ok {
 			return typ
 		}
 	}
 	return nil
 }
 
-// BinaryType implements HasBinaryType.
-func (t *NamedType) BinaryType(op syntax.Token) Type {
-	if t.BinaryOps != nil {
-		if typ, ok := t.BinaryOps[op]; ok {
+func (t *namedType) BinaryType(op syntax.Token) Type {
+	if t.binaryOps != nil {
+		if typ, ok := t.binaryOps[op]; ok {
 			return typ
 		}
 	}
 	return nil
 }
 
-// UnaryType implements HasUnaryType.
-func (t *NamedType) UnaryType(op syntax.Token) Type {
-	if t.UnaryOps != nil {
-		if typ, ok := t.UnaryOps[op]; ok {
+func (t *namedType) UnaryType(op syntax.Token) Type {
+	if t.unaryOps != nil {
+		if typ, ok := t.unaryOps[op]; ok {
 			return typ
 		}
 	}
 	return nil
 }
 
-// CallSignature implements CallableType.
-func (t *NamedType) CallSignature() *Callable {
-	return t.CallSig
+func (t *namedType) CallSignature() *Callable {
+	return t.callSig
 }
 
-// ElemType implements IndexableType.
-func (t *NamedType) ElemType() Type {
-	return t.Index
+func (t *namedType) ElemType() Type {
+	return t.index
 }
 
-// SliceResultType implements SliceableType.
-func (t *NamedType) SliceResultType() Type {
-	return t.Slice
+func (t *namedType) SliceResultType() Type {
+	return t.slice
 }
 
-// IterElemType implements IterableType.
-func (t *NamedType) IterElemType() Type {
-	return t.IterElem
+func (t *namedType) IterElemType() Type {
+	return t.iterElem
 }
 
-// SetIndexType implements HasSetIndexType.
-func (t *NamedType) SetIndexType() Type {
-	return t.SetIndex
+func (t *namedType) SetIndexType() Type {
+	return t.setIndex
 }
 
-// MappingValueType implements MappingType.
-func (t *NamedType) MappingValueType() Type {
-	return t.SetKey
+func (t *namedType) MappingValueType() Type {
+	return t.setKey
 }
 
-// IsComparable implements ComparableType.
-// Returns true if Comparable is nil (unknown, assume comparable) or *true.
-func (t *NamedType) IsComparable() bool {
-	return t.Comparable == nil || *t.Comparable
+func (t *namedType) IsComparable() bool {
+	return t.comparable == nil || *t.comparable
 }
 
 // TypeAndValue reports the type of an expression.

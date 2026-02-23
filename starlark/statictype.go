@@ -70,7 +70,7 @@ func StaticType(v Value) typecheck.Type {
 	case *Builtin:
 		return v.StaticType()
 	default:
-		return &typecheck.NamedType{TypeName: v.Type()}
+		return typecheck.NewNamed(v.Type())
 	}
 }
 

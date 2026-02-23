@@ -235,12 +235,11 @@ func TestFunctionTypesAsValues(t *testing.T) {
 }
 
 func TestExtensionTypes(t *testing.T) {
-	mytype := &typecheck.NamedType{
-		TypeName: "mytype",
-		Attrs: map[string]typecheck.Type{
+	mytype := typecheck.NewNamed("mytype",
+		typecheck.WithAttrs(map[string]typecheck.Type{
 			"count": typecheck.Int,
-		},
-	}
+		}),
+	)
 	env := &typecheck.Env{Predeclared: map[string]typecheck.Type{
 		"mytype": mytype,
 		"val":    mytype,
@@ -559,12 +558,11 @@ func TestInfoOptIn(t *testing.T) {
 }
 
 func TestUnaryOpsDescriptor(t *testing.T) {
-	durationType := &typecheck.NamedType{
-		TypeName: "duration",
-		UnaryOps: map[syntax.Token]typecheck.Type{
-			syntax.MINUS: &typecheck.NamedType{TypeName: "duration"},
-		},
-	}
+	durationType := typecheck.NewNamed("duration",
+		typecheck.WithUnaryOps(map[syntax.Token]typecheck.Type{
+			syntax.MINUS: typecheck.NewNamed("duration"),
+		}),
+	)
 	env := &typecheck.Env{Predeclared: map[string]typecheck.Type{
 		"duration": durationType,
 		"d":        durationType,
@@ -594,14 +592,13 @@ func TestUnaryOpsDescriptor(t *testing.T) {
 }
 
 func TestCallSigDescriptor(t *testing.T) {
-	regexType := &typecheck.NamedType{
-		TypeName: "regex",
-		CallSig: &typecheck.Callable{
+	regexType := typecheck.NewNamed("regex",
+		typecheck.WithCallSignature(&typecheck.Callable{
 			Name:       "regex",
 			Params:     []typecheck.Param{{Name: "s", Type: typecheck.String}},
 			ReturnType: typecheck.Bool,
-		},
-	}
+		}),
+	)
 	env := &typecheck.Env{Predeclared: map[string]typecheck.Type{
 		"regex":   regexType,
 		"pattern": regexType,
@@ -635,10 +632,9 @@ func TestCallSigDescriptor(t *testing.T) {
 }
 
 func TestIterElemDescriptor(t *testing.T) {
-	strsetType := &typecheck.NamedType{
-		TypeName:     "strset",
-		IterElem: typecheck.String,
-	}
+	strsetType := typecheck.NewNamed("strset",
+		typecheck.WithIterElem(typecheck.String),
+	)
 	env := &typecheck.Env{Predeclared: map[string]typecheck.Type{
 		"strset": strsetType,
 		"ss":     strsetType,
@@ -669,11 +665,10 @@ func TestIterElemDescriptor(t *testing.T) {
 }
 
 func TestSliceTypeDescriptor(t *testing.T) {
-	bufferType := &typecheck.NamedType{
-		TypeName:  "buffer",
-		Slice: &typecheck.NamedType{TypeName: "buffer"},
-		Index: typecheck.Int,
-	}
+	bufferType := typecheck.NewNamed("buffer",
+		typecheck.WithSlice(typecheck.NewNamed("buffer")),
+		typecheck.WithIndex(typecheck.Int),
+	)
 	env := &typecheck.Env{Predeclared: map[string]typecheck.Type{
 		"buffer": bufferType,
 		"buf":    bufferType,
@@ -705,14 +700,13 @@ func TestSliceTypeDescriptor(t *testing.T) {
 }
 
 func TestBinaryOpsAllOperators(t *testing.T) {
-	vecType := &typecheck.NamedType{
-		TypeName: "vec",
-		BinaryOps: map[syntax.Token]typecheck.Type{
-			syntax.PLUS:  &typecheck.NamedType{TypeName: "vec"},
-			syntax.MINUS: &typecheck.NamedType{TypeName: "vec"},
-			syntax.STAR:  &typecheck.NamedType{TypeName: "vec"},
-		},
-	}
+	vecType := typecheck.NewNamed("vec",
+		typecheck.WithBinaryOps(map[syntax.Token]typecheck.Type{
+			syntax.PLUS:  typecheck.NewNamed("vec"),
+			syntax.MINUS: typecheck.NewNamed("vec"),
+			syntax.STAR:  typecheck.NewNamed("vec"),
+		}),
+	)
 	env := &typecheck.Env{Predeclared: map[string]typecheck.Type{
 		"vec": vecType,
 		"v":   vecType,
@@ -745,11 +739,10 @@ func TestBinaryOpsAllOperators(t *testing.T) {
 }
 
 func TestSetIndexTypeDescriptor(t *testing.T) {
-	intarrayType := &typecheck.NamedType{
-		TypeName:     "intarray",
-		Index:    typecheck.Int,
-		SetIndex: typecheck.Int,
-	}
+	intarrayType := typecheck.NewNamed("intarray",
+		typecheck.WithIndex(typecheck.Int),
+		typecheck.WithSetIndex(typecheck.Int),
+	)
 	env := &typecheck.Env{Predeclared: map[string]typecheck.Type{
 		"intarray": intarrayType,
 		"arr":      intarrayType,
@@ -780,11 +773,10 @@ func TestSetIndexTypeDescriptor(t *testing.T) {
 }
 
 func TestMappingKeyValueDescriptor(t *testing.T) {
-	configType := &typecheck.NamedType{
-		TypeName:   "config",
-		SetKey: typecheck.String,
-		Index:  typecheck.String,
-	}
+	configType := typecheck.NewNamed("config",
+		typecheck.WithSetKey(typecheck.String),
+		typecheck.WithIndex(typecheck.String),
+	)
 	env := &typecheck.Env{Predeclared: map[string]typecheck.Type{
 		"config": configType,
 		"cfg":    configType,
@@ -816,17 +808,16 @@ func TestMappingKeyValueDescriptor(t *testing.T) {
 }
 
 func TestSetFieldTypesDescriptor(t *testing.T) {
-	pointType := &typecheck.NamedType{
-		TypeName: "point",
-		Attrs: map[string]typecheck.Type{
+	pointType := typecheck.NewNamed("point",
+		typecheck.WithAttrs(map[string]typecheck.Type{
 			"x": typecheck.Int,
 			"y": typecheck.Int,
-		},
-		SetFields: map[string]typecheck.Type{
+		}),
+		typecheck.WithSetFields(map[string]typecheck.Type{
 			"x": typecheck.Int,
 			"y": typecheck.Int,
-		},
-	}
+		}),
+	)
 	env := &typecheck.Env{Predeclared: map[string]typecheck.Type{
 		"point": pointType,
 		"p":     pointType,
@@ -861,16 +852,12 @@ func TestSetFieldTypesDescriptor(t *testing.T) {
 }
 
 func TestComparableDescriptor(t *testing.T) {
-	boolTrue := true
-	boolFalse := false
-	orderedType := &typecheck.NamedType{
-		TypeName:       "ordered",
-		Comparable: &boolTrue,
-	}
-	unorderedType := &typecheck.NamedType{
-		TypeName:       "unordered",
-		Comparable: &boolFalse,
-	}
+	orderedType := typecheck.NewNamed("ordered",
+		typecheck.WithComparable(true),
+	)
+	unorderedType := typecheck.NewNamed("unordered",
+		typecheck.WithComparable(false),
+	)
 	env := &typecheck.Env{Predeclared: map[string]typecheck.Type{
 		"ordered":   orderedType,
 		"unordered": unorderedType,
