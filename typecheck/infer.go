@@ -29,9 +29,12 @@ func (c *Checker) exprTypeInner(expr syntax.Expr) Type {
 		}
 		// Look up via resolve.Binding.
 		if b := c.lookupBinding(e); b != nil {
-			// Record in Uses map.
+			// Record in Uses map with canonical def binding and inferred type.
 			if c.info != nil && c.info.Uses != nil {
-				c.info.Uses[e] = b
+				c.info.Uses[e] = &UseBinding{
+					Binding: c.getDefBinding(e),
+					Type:    b.Type,
+				}
 			}
 			return b.Type
 		}

@@ -32,11 +32,12 @@ type Env struct {
 
 // Checker performs static type checking on resolved Starlark ASTs.
 type Checker struct {
-	bindings map[*resolve.Binding]*Binding // type for each resolve.Binding
-	errors   []Error                       // accumulated type errors
-	fn       *Callable                     // current function (for return type checks)
-	tenv     *Env                          // type environment for extension type lookups
-	info     *Info                         // type info to populate (may be nil)
+	bindings    map[*resolve.Binding]*Binding // current inferred type (for type checking)
+	defBindings map[*resolve.Binding]*Binding // canonical def binding (declared type, for Defs/Uses)
+	errors      []Error                       // accumulated type errors
+	fn          *Callable                     // current function (for return type checks)
+	tenv        *Env                          // type environment for extension type lookups
+	info        *Info                         // type info to populate (may be nil)
 }
 
 func (c *Checker) errorf(pos syntax.Position, format string, args ...interface{}) {
@@ -68,16 +69,31 @@ func (c *Checker) lookupBinding(id *syntax.Ident) *Binding {
 	}
 	b := &Binding{Name: id.Name, Type: typ}
 	c.bindings[rb] = b
+	c.defBindings[rb] = b // same object for predeclared/universal
 	return b
+}
+
+// getDefBinding returns the canonical definition binding for id.
+// Falls back to the internal binding for predeclared/universal names.
+func (c *Checker) getDefBinding(id *syntax.Ident) *Binding {
+	rb, ok := id.Binding.(*resolve.Binding)
+	if !ok {
+		return nil
+	}
+	if b, ok := c.defBindings[rb]; ok {
+		return b
+	}
+	return c.bindings[rb] // fallback for predeclared/universal
 }
 
 // Check type-checks a resolved file and returns any type errors.
 // If info is non-nil, the checker populates its non-nil maps with type information.
 func Check(file *syntax.File, env *Env, info *Info) []Error {
 	c := &Checker{
-		bindings: make(map[*resolve.Binding]*Binding),
-		tenv:     env,
-		info:     info,
+		bindings:    make(map[*resolve.Binding]*Binding),
+		defBindings: make(map[*resolve.Binding]*Binding),
+		tenv:        env,
+		info:        info,
 	}
 
 	// Check each statement.
@@ -91,13 +107,20 @@ func Check(file *syntax.File, env *Env, info *Info) []Error {
 
 // define creates a Binding for id with the given type, stores it keyed on
 // the identifier's resolve.Binding, and records it in info.Defs if non-nil.
+// On first define for a given resolve.Binding, the same object is stored in
+// both bindings and defBindings. Subsequent defines update bindings but leave
+// defBindings unchanged. Defs always records the defBinding.
 func (c *Checker) define(id *syntax.Ident, typ Type) *Binding {
 	b := &Binding{Pos: id.NamePos, Name: id.Name, Type: typ}
-	if rb, ok := id.Binding.(*resolve.Binding); ok {
+	rb, ok := id.Binding.(*resolve.Binding)
+	if ok {
 		c.bindings[rb] = b
+		if _, exists := c.defBindings[rb]; !exists {
+			c.defBindings[rb] = b // first define: same object for both
+		}
 	}
-	if c.info != nil && c.info.Defs != nil {
-		c.info.Defs[id] = b
+	if c.info != nil && c.info.Defs != nil && ok {
+		c.info.Defs[id] = c.defBindings[rb]
 	}
 	return b
 }
@@ -225,6 +248,14 @@ func (c *Checker) checkAssignStmt(s *syntax.AssignStmt) {
 			if id, ok := s.LHS.(*syntax.Ident); ok {
 				b := c.define(id, declaredType)
 				b.Declared = true
+				// Overwrite the def binding with the declared type.
+				if rb, ok := id.Binding.(*resolve.Binding); ok {
+					c.defBindings[rb] = b
+				}
+				// Re-record Defs with the updated def binding.
+				if c.info != nil && c.info.Defs != nil {
+					c.info.Defs[id] = b
+				}
 			}
 		} else if s.RHS != nil {
 			// Simple assignment: x = expr
@@ -287,14 +318,28 @@ func augmentedToOp(op syntax.Token) syntax.Token {
 func (c *Checker) bindAssign(lhs syntax.Expr, rhsType Type) {
 	switch lhs := lhs.(type) {
 	case *syntax.Ident:
-		// Check if the variable was previously declared with a type.
 		if b := c.lookupBinding(lhs); b != nil && b.Declared && b.Type != Any {
+			// Declared variable — enforce type compatibility.
 			if !Assignable(rhsType, b.Type) {
 				c.errorf(lhs.NamePos, "cannot use %s as %s", rhsType, b.Type)
 			}
-			// Keep the declared type.
+			// Record in Defs (reuse the existing declared def binding).
+			if c.info != nil && c.info.Defs != nil {
+				if rb, ok := lhs.Binding.(*resolve.Binding); ok {
+					c.info.Defs[lhs] = c.defBindings[rb]
+				}
+			}
 		} else {
-			c.define(lhs, rhsType)
+			// Undeclared variable — update inferred type, def type stays Any.
+			if rb, ok := lhs.Binding.(*resolve.Binding); ok {
+				if _, exists := c.defBindings[rb]; !exists {
+					c.defBindings[rb] = &Binding{Pos: lhs.NamePos, Name: lhs.Name, Type: Any}
+				}
+				c.bindings[rb] = &Binding{Pos: lhs.NamePos, Name: lhs.Name, Type: rhsType}
+				if c.info != nil && c.info.Defs != nil {
+					c.info.Defs[lhs] = c.defBindings[rb]
+				}
+			}
 		}
 	case *syntax.TupleExpr:
 		for _, el := range lhs.List {

@@ -408,40 +408,44 @@ func TestInfoDefs(t *testing.T) {
 func TestInfoUses(t *testing.T) {
 	info := &typecheck.Info{
 		Defs: make(map[*syntax.Ident]*typecheck.Binding),
-		Uses: make(map[*syntax.Ident]*typecheck.Binding),
+		Uses: make(map[*syntax.Ident]*typecheck.UseBinding),
 	}
 	f, errs := checkWithInfo(t, "x = 5\ny = x", info)
 	if len(errs) > 0 {
 		t.Fatalf("unexpected errors: %v", errs)
 	}
 
-	// "x = 5": x should be in Defs.
+	// "x = 5": x should be in Defs with Type=Any (undeclared).
 	assign1 := f.Stmts[0].(*syntax.AssignStmt)
 	defId := assign1.LHS.(*syntax.Ident)
 	defBinding, ok := info.Defs[defId]
 	if !ok {
 		t.Fatal("Ident 'x' in 'x = 5' not in Defs map")
 	}
-	if defBinding.Type != typecheck.Int {
-		t.Errorf("Def binding type = %v, want int", defBinding.Type)
+	if defBinding.Type != typecheck.Any {
+		t.Errorf("Def binding type = %v, want any", defBinding.Type)
 	}
 
-	// "y = x": x should be in Uses, pointing to same Binding.
+	// "y = x": x should be in Uses, with UseBinding.Binding pointing to same def Binding.
 	assign2 := f.Stmts[1].(*syntax.AssignStmt)
 	useId := assign2.RHS.(*syntax.Ident)
 	useBinding, ok := info.Uses[useId]
 	if !ok {
 		t.Fatal("Ident 'x' in 'y = x' not in Uses map")
 	}
-	if useBinding != defBinding {
-		t.Errorf("Use binding (%p) != Def binding (%p)", useBinding, defBinding)
+	if useBinding.Binding != defBinding {
+		t.Errorf("Use binding (%p) != Def binding (%p)", useBinding.Binding, defBinding)
+	}
+	// The inferred type at the use site should be Int.
+	if useBinding.Type != typecheck.Int {
+		t.Errorf("UseBinding.Type = %v, want int", useBinding.Type)
 	}
 }
 
 func TestInfoFunctionDef(t *testing.T) {
 	info := &typecheck.Info{
 		Defs: make(map[*syntax.Ident]*typecheck.Binding),
-		Uses: make(map[*syntax.Ident]*typecheck.Binding),
+		Uses: make(map[*syntax.Ident]*typecheck.UseBinding),
 	}
 	_, errs := checkWithInfo(t, "def f(x: int) -> str:\n  return str(x)", info)
 	if len(errs) > 0 {
@@ -479,17 +483,17 @@ func TestInfoFunctionDef(t *testing.T) {
 	}
 
 	// Check that x in "str(x)" is in Uses.
-	var xUse *typecheck.Binding
-	for id, b := range info.Uses {
+	var xUse *typecheck.UseBinding
+	for id, ub := range info.Uses {
 		if id.Name == "x" {
-			xUse = b
+			xUse = ub
 			break
 		}
 	}
 	if xUse == nil {
 		t.Fatal("use of 'x' not found in Uses")
 	}
-	if xUse != xDef {
+	if xUse.Binding != xDef {
 		t.Error("use-site binding for x != def-site binding")
 	}
 }
@@ -1099,5 +1103,80 @@ func TestUntypedReassignment(t *testing.T) {
 				t.Errorf("check(%q): expected error containing %q, got %v", test.src, test.wantErr, errs)
 			}
 		}
+	}
+}
+
+func TestReassignmentBindings(t *testing.T) {
+	info := &typecheck.Info{
+		Types: make(map[syntax.Expr]typecheck.TypeAndValue),
+		Defs:  make(map[*syntax.Ident]*typecheck.Binding),
+		Uses:  make(map[*syntax.Ident]*typecheck.UseBinding),
+	}
+	// x = 5; y = x; x = "hello"; z = x
+	f, errs := checkWithInfo(t, "def f():\n  x = 5\n  y = x\n  x = 'hello'\n  z = x", info)
+	if len(errs) > 0 {
+		t.Fatalf("unexpected errors: %v", errs)
+	}
+
+	// Collect all Defs and Uses for "x".
+	defStmt := f.Stmts[0].(*syntax.DefStmt)
+	body := defStmt.Body
+
+	// x = 5 (stmt 0)
+	assign1 := body[0].(*syntax.AssignStmt)
+	xDef1 := assign1.LHS.(*syntax.Ident)
+	def1, ok := info.Defs[xDef1]
+	if !ok {
+		t.Fatal("x in 'x = 5' not in Defs")
+	}
+
+	// y = x (stmt 1): x is a use
+	assign2 := body[1].(*syntax.AssignStmt)
+	xUse1 := assign2.RHS.(*syntax.Ident)
+	use1, ok := info.Uses[xUse1]
+	if !ok {
+		t.Fatal("x in 'y = x' not in Uses")
+	}
+
+	// x = "hello" (stmt 2)
+	assign3 := body[2].(*syntax.AssignStmt)
+	xDef2 := assign3.LHS.(*syntax.Ident)
+	def2, ok := info.Defs[xDef2]
+	if !ok {
+		t.Fatal("x in 'x = hello' not in Defs")
+	}
+
+	// z = x (stmt 3): x is a use
+	assign4 := body[3].(*syntax.AssignStmt)
+	xUse2 := assign4.RHS.(*syntax.Ident)
+	use2, ok := info.Uses[xUse2]
+	if !ok {
+		t.Fatal("x in 'z = x' not in Uses")
+	}
+
+	// Both Defs entries for x should point to the same binding (canonical def).
+	if def1 != def2 {
+		t.Errorf("Defs[x=5] (%p) != Defs[x=hello] (%p); want same canonical binding", def1, def2)
+	}
+
+	// The canonical def binding should have Type=Any (undeclared variable).
+	if def1.Type != typecheck.Any {
+		t.Errorf("canonical def binding type = %v, want any", def1.Type)
+	}
+
+	// UseBinding.Binding should be pointer-equal to the canonical def binding.
+	if use1.Binding != def1 {
+		t.Errorf("use1.Binding (%p) != def1 (%p)", use1.Binding, def1)
+	}
+	if use2.Binding != def1 {
+		t.Errorf("use2.Binding (%p) != def1 (%p)", use2.Binding, def1)
+	}
+
+	// Use-site inferred types should reflect the current inferred type.
+	if use1.Type != typecheck.Int {
+		t.Errorf("use1.Type = %v, want int", use1.Type)
+	}
+	if use2.Type != typecheck.String {
+		t.Errorf("use2.Type = %v, want string", use2.Type)
 	}
 }

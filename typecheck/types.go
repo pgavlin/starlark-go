@@ -362,6 +362,13 @@ type Binding struct {
 	Declared bool // true if type was set by an explicit annotation
 }
 
+// UseBinding records a use of a binding, capturing the inferred type at the
+// point of use and a pointer back to the canonical definition binding.
+type UseBinding struct {
+	Binding *Binding // the defining binding (same pointer as in Defs)
+	Type    Type     // inferred type at the point of use
+}
+
 // Info holds the type information resulting from type-checking a Starlark file.
 // Only non-nil maps are populated during type-checking.
 type Info struct {
@@ -374,12 +381,13 @@ type Info struct {
 	// parameters, for-loop variables, and load statement bindings.
 	Defs map[*syntax.Ident]*Binding
 
-	// Uses maps identifiers at use sites to the bindings they reference.
-	Uses map[*syntax.Ident]*Binding
+	// Uses maps identifiers at use sites to their UseBinding, which pairs
+	// the canonical definition binding with the inferred type at the point of use.
+	Uses map[*syntax.Ident]*UseBinding
 }
 
 // TypeOf returns the type of expression e, or nil if unknown.
-// For identifiers, it checks Types first, then Defs, then Uses.
+// For identifiers, it checks Types first, then Uses (inferred type), then Defs.
 func (info *Info) TypeOf(e syntax.Expr) Type {
 	if info == nil {
 		return nil
@@ -390,8 +398,15 @@ func (info *Info) TypeOf(e syntax.Expr) Type {
 		}
 	}
 	if id, ok := e.(*syntax.Ident); ok {
-		if b := info.BindingOf(id); b != nil {
-			return b.Type
+		if info.Uses != nil {
+			if ub, ok := info.Uses[id]; ok {
+				return ub.Type
+			}
+		}
+		if info.Defs != nil {
+			if b, ok := info.Defs[id]; ok {
+				return b.Type
+			}
 		}
 	}
 	return nil
@@ -408,8 +423,8 @@ func (info *Info) BindingOf(id *syntax.Ident) *Binding {
 		}
 	}
 	if info.Uses != nil {
-		if b, ok := info.Uses[id]; ok {
-			return b
+		if ub, ok := info.Uses[id]; ok {
+			return ub.Binding
 		}
 	}
 	return nil
