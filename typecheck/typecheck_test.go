@@ -568,3 +568,97 @@ func TestInfoOptIn(t *testing.T) {
 
 	_ = f
 }
+
+func TestLoadCallback(t *testing.T) {
+	mathTypes := map[string]typecheck.Type{
+		"pi":  typecheck.Float,
+		"add": typecheck.Int,
+	}
+
+	tests := []struct {
+		name    string
+		src     string
+		env     *typecheck.Env
+		wantErr string
+	}{
+		{
+			name: "known module, known name",
+			src:  "load('math.star', 'pi')\nx: float = pi",
+			env: &typecheck.Env{
+				Load: func(module string) map[string]typecheck.Type {
+					if module == "math.star" {
+						return mathTypes
+					}
+					return nil
+				},
+			},
+			wantErr: "",
+		},
+		{
+			name: "known module, unknown name",
+			src:  "load('math.star', 'unknown')",
+			env: &typecheck.Env{
+				Load: func(module string) map[string]typecheck.Type {
+					if module == "math.star" {
+						return mathTypes
+					}
+					return nil
+				},
+			},
+			wantErr: "",
+		},
+		{
+			name: "unknown module returns nil",
+			src:  "load('other.star', 'foo')",
+			env: &typecheck.Env{
+				Load: func(module string) map[string]typecheck.Type {
+					return nil
+				},
+			},
+			wantErr: "",
+		},
+		{
+			name:    "nil Load callback",
+			src:     "load('math.star', 'pi')",
+			env:     nil,
+			wantErr: "",
+		},
+		{
+			name: "aliased load",
+			src:  "load('math.star', x='pi')\ny: float = x",
+			env: &typecheck.Env{
+				Load: func(module string) map[string]typecheck.Type {
+					return mathTypes
+				},
+			},
+			wantErr: "",
+		},
+		{
+			name: "type error through load",
+			src:  "load('math.star', 'pi')\nx: int = pi",
+			env: &typecheck.Env{
+				Load: func(module string) map[string]typecheck.Type {
+					return mathTypes
+				},
+			},
+			wantErr: "cannot use float as int",
+		},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			errs := check(t, test.src, test.env)
+			if test.wantErr == "" {
+				if len(errs) > 0 {
+					t.Errorf("unexpected errors: %v", errs)
+				}
+			} else {
+				if len(errs) == 0 {
+					t.Errorf("expected error containing %q, got none", test.wantErr)
+				} else if !containsError(errs, test.wantErr) {
+					t.Errorf("expected error containing %q, got %v", test.wantErr, errs)
+				}
+			}
+		})
+	}
+}

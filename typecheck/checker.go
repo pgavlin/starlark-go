@@ -24,6 +24,11 @@ type Env struct {
 	// TypeDescriptors maps type names (as returned by Value.Type()) to
 	// descriptors that provide attribute, method, and operator type info.
 	TypeDescriptors map[string]*TypeDescriptor
+
+	// Load resolves type information for a loaded module.
+	// It receives the module string from the load() statement and returns
+	// a mapping of exported names to their types, or nil if unknown.
+	Load func(module string) map[string]Type
 }
 
 // TypeDescriptor describes the static type information for a Go-defined
@@ -198,9 +203,19 @@ func (c *Checker) stmt(stmt syntax.Stmt) {
 		c.stmts(s.False)
 
 	case *syntax.LoadStmt:
-		// Load statements: all loaded names get type Any.
-		for _, to := range s.To {
-			c.define(to, Any)
+		// Resolve module types via callback if available.
+		var moduleTypes map[string]Type
+		if c.tenv != nil && c.tenv.Load != nil {
+			moduleTypes = c.tenv.Load(s.ModuleName())
+		}
+		for i, to := range s.To {
+			typ := Type(Any)
+			if moduleTypes != nil {
+				if t, ok := moduleTypes[s.From[i].Name]; ok {
+					typ = t
+				}
+			}
+			c.define(to, typ)
 		}
 
 	case *syntax.BranchStmt:
