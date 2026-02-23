@@ -27,8 +27,8 @@ func (c *Checker) exprTypeInner(expr syntax.Expr) Type {
 		if e.Name == "True" || e.Name == "False" {
 			return Bool
 		}
-		// Look up in scope.
-		if b := c.env.lookup(e.Name); b != nil {
+		// Look up via resolve.Binding.
+		if b := c.lookupBinding(e); b != nil {
 			// Record in Uses map.
 			if c.info != nil && c.info.Uses != nil {
 				c.info.Uses[e] = b

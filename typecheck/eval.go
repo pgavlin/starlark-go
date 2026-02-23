@@ -40,9 +40,9 @@ func (c *Checker) evalType(expr syntax.Expr) Type {
 		if t, ok := Universe[e.Name]; ok {
 			return t
 		}
-		// Check env.Names for extension type names.
-		if c.tenv != nil && c.tenv.Names != nil {
-			if t, ok := c.tenv.Names[e.Name]; ok {
+		// Check env.Predeclared for extension type names.
+		if c.tenv != nil && c.tenv.Predeclared != nil {
+			if t, ok := c.tenv.Predeclared[e.Name]; ok {
 				return t
 			}
 		}

@@ -3,6 +3,7 @@ package typecheck
 import (
 	"fmt"
 
+	"github.com/pgavlin/starlark-go/resolve"
 	"github.com/pgavlin/starlark-go/syntax"
 )
 
@@ -18,10 +19,10 @@ func (e Error) Error() string {
 
 // Env provides type information for predeclared names and extension types.
 type Env struct {
-	// Names maps predeclared/universal names to their types.
+	// Predeclared maps predeclared names to their types.
 	// Extension types should be registered here under both their type name
 	// (for use in annotations) and variable names (for bindings).
-	Names map[string]Type
+	Predeclared map[string]Type
 
 	// Load resolves type information for a loaded module.
 	// It receives the module string from the load() statement and returns
@@ -29,75 +30,54 @@ type Env struct {
 	Load func(module string) map[string]Type
 }
 
-// scope represents a lexical scope mapping names to bindings.
-type scope struct {
-	parent   *scope
-	bindings map[string]*Binding
-}
-
-func (s *scope) lookup(name string) *Binding {
-	for sc := s; sc != nil; sc = sc.parent {
-		if b, ok := sc.bindings[name]; ok {
-			return b
-		}
-	}
-	return nil
-}
-
-func (s *scope) lookupType(name string) Type {
-	if b := s.lookup(name); b != nil {
-		return b.Type
-	}
-	return nil
-}
-
-func (s *scope) set(b *Binding) {
-	if s.bindings == nil {
-		s.bindings = make(map[string]*Binding)
-	}
-	s.bindings[b.Name] = b
-}
-
 // Checker performs static type checking on resolved Starlark ASTs.
 type Checker struct {
-	env    *scope    // current type environment
-	errors []Error   // accumulated type errors
-	fn     *Callable // current function (for return type checks)
-	tenv   *Env      // type environment for extension type lookups
-	info   *Info     // type info to populate (may be nil)
+	bindings map[*resolve.Binding]*Binding // type for each resolve.Binding
+	errors   []Error                       // accumulated type errors
+	fn       *Callable                     // current function (for return type checks)
+	tenv     *Env                          // type environment for extension type lookups
+	info     *Info                         // type info to populate (may be nil)
 }
 
 func (c *Checker) errorf(pos syntax.Position, format string, args ...interface{}) {
 	c.errors = append(c.errors, Error{pos, fmt.Sprintf(format, args...)})
 }
 
-func (c *Checker) pushScope() {
-	c.env = &scope{parent: c.env}
-}
-
-func (c *Checker) popScope() {
-	c.env = c.env.parent
+// lookupBinding returns the type binding for the given identifier, lazily
+// populating predeclared and universal bindings on first access.
+func (c *Checker) lookupBinding(id *syntax.Ident) *Binding {
+	rb, ok := id.Binding.(*resolve.Binding)
+	if !ok {
+		return nil
+	}
+	if b, ok := c.bindings[rb]; ok {
+		return b
+	}
+	// Lazy populate predeclared/universal types.
+	var typ Type
+	switch rb.Scope {
+	case resolve.Predeclared:
+		if c.tenv != nil && c.tenv.Predeclared != nil {
+			typ = c.tenv.Predeclared[id.Name]
+		}
+	case resolve.Universal:
+		typ = Universe[id.Name]
+	}
+	if typ == nil {
+		return nil
+	}
+	b := &Binding{Name: id.Name, Type: typ}
+	c.bindings[rb] = b
+	return b
 }
 
 // Check type-checks a resolved file and returns any type errors.
 // If info is non-nil, the checker populates its non-nil maps with type information.
 func Check(file *syntax.File, env *Env, info *Info) []Error {
 	c := &Checker{
-		env:  &scope{},
-		tenv: env,
-		info: info,
-	}
-
-	// Populate the base scope with universal names.
-	for name, t := range Universe {
-		c.defineName(name, t)
-	}
-
-	// Populate predeclared names from env (may override Universe).
-	if env != nil && env.Names != nil {
-		for name, t := range env.Names {
-			c.defineName(name, t)
-		}
+		bindings: make(map[*resolve.Binding]*Binding),
+		tenv:     env,
+		info:     info,
 	}
 
 	// Check each statement.
@@ -109,21 +89,16 @@ func Check(file *syntax.File, env *Env, info *Info) []Error {
 	return c.errors
 }
 
-// define creates a Binding for id with the given type, adds it to the current
-// scope, and records it in info.Defs if the map is non-nil.
+// define creates a Binding for id with the given type, stores it keyed on
+// the identifier's resolve.Binding, and records it in info.Defs if non-nil.
 func (c *Checker) define(id *syntax.Ident, typ Type) *Binding {
 	b := &Binding{Pos: id.NamePos, Name: id.Name, Type: typ}
-	c.env.set(b)
+	if rb, ok := id.Binding.(*resolve.Binding); ok {
+		c.bindings[rb] = b
+	}
 	if c.info != nil && c.info.Defs != nil {
 		c.info.Defs[id] = b
 	}
-	return b
-}
-
-// defineName creates a Binding for a predeclared name (no AST node).
-func (c *Checker) defineName(name string, typ Type) *Binding {
-	b := &Binding{Name: name, Type: typ}
-	c.env.set(b)
 	return b
 }
 
@@ -156,11 +131,9 @@ func (c *Checker) stmt(stmt syntax.Stmt) {
 		c.checkReturnStmt(s)
 
 	case *syntax.ForStmt:
-		c.exprType(s.X)
-		c.pushScope()
-		c.bindForVars(s.Vars, c.exprType(s.X))
+		iterType := c.exprType(s.X)
+		c.bindForVars(s.Vars, iterType)
 		c.stmts(s.Body)
-		c.popScope()
 
 	case *syntax.WhileStmt:
 		c.exprType(s.Cond)
@@ -264,8 +237,7 @@ func (c *Checker) checkAssignStmt(s *syntax.AssignStmt) {
 			rhsType := c.exprType(s.RHS)
 			// Check if the existing variable has a declared type.
 			if id, ok := s.LHS.(*syntax.Ident); ok {
-				existingType := c.env.lookupType(id.Name)
-				if existingType != nil && existingType != Any {
+				if b := c.lookupBinding(id); b != nil && b.Type != Any {
 					// Check that the result is assignable.
 					resultType := c.binaryExprType(&syntax.BinaryExpr{
 						X:  s.LHS,
@@ -274,8 +246,8 @@ func (c *Checker) checkAssignStmt(s *syntax.AssignStmt) {
 					})
 					_ = lhsType
 					_ = rhsType
-					if !Assignable(resultType, existingType) {
-						c.errorf(s.OpPos, "cannot use %s as %s", resultType, existingType)
+					if !Assignable(resultType, b.Type) {
+						c.errorf(s.OpPos, "cannot use %s as %s", resultType, b.Type)
 					}
 				}
 			}
@@ -315,10 +287,9 @@ func (c *Checker) bindAssign(lhs syntax.Expr, rhsType Type) {
 	switch lhs := lhs.(type) {
 	case *syntax.Ident:
 		// Check if the variable was previously declared with a type.
-		existingType := c.env.lookupType(lhs.Name)
-		if existingType != nil && existingType != Any {
-			if !Assignable(rhsType, existingType) {
-				c.errorf(lhs.NamePos, "cannot use %s as %s", rhsType, existingType)
+		if b := c.lookupBinding(lhs); b != nil && b.Type != Any {
+			if !Assignable(rhsType, b.Type) {
+				c.errorf(lhs.NamePos, "cannot use %s as %s", rhsType, b.Type)
 			}
 			// Keep the declared type.
 		} else {
@@ -400,11 +371,10 @@ func (c *Checker) checkDefStmt(s *syntax.DefStmt) {
 		ReturnType: returnType,
 	}
 
-	// Register the function in the current scope.
+	// Register the function in the enclosing scope.
 	c.define(s.Name, callable)
 
-	// Check the function body in a new scope.
-	c.pushScope()
+	// Check the function body.
 	oldFn := c.fn
 	c.fn = callable
 
@@ -417,7 +387,6 @@ func (c *Checker) checkDefStmt(s *syntax.DefStmt) {
 	c.stmts(s.Body)
 
 	c.fn = oldFn
-	c.popScope()
 }
 
 // defineParam extracts the identifier from a parameter AST node and defines it.
