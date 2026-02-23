@@ -80,6 +80,7 @@ import (
 
 	"github.com/pgavlin/starlark-go/internal/compile"
 	"github.com/pgavlin/starlark-go/syntax"
+	"github.com/pgavlin/starlark-go/typecheck"
 )
 
 // Value is a value in the Starlark interpreter.
@@ -852,7 +853,8 @@ type Builtin struct {
 	name string
 	doc  string
 	fn   func(thread *Thread, fn *Builtin, args Tuple, kwargs []Tuple) (Value, error)
-	recv Value // for bound methods (e.g. "".startswith)
+	recv Value              // for bound methods (e.g. "".startswith)
+	sig  *typecheck.Callable // optional static type signature
 }
 
 func (b *Builtin) Name() string { return b.name }
@@ -886,6 +888,27 @@ func NewBuiltin(name string, fn func(thread *Thread, fn *Builtin, args Tuple, kw
 	return &Builtin{name: name, fn: fn}
 }
 
+// NewBuiltinWithSignature returns a new 'builtin_function_or_method' value with
+// the specified name, implementation, and static type signature. The signature is
+// used by the type checker to validate call sites.
+func NewBuiltinWithSignature(name string, fn func(thread *Thread, fn *Builtin, args Tuple, kwargs []Tuple) (Value, error), sig *typecheck.Callable) *Builtin {
+	return &Builtin{name: name, fn: fn, sig: sig}
+}
+
+// StaticType returns the static type signature for this builtin. If no signature
+// was provided via NewBuiltinWithSignature, a default signature that accepts any
+// arguments and returns any type is returned.
+func (b *Builtin) StaticType() *typecheck.Callable {
+	if b.sig != nil {
+		return b.sig
+	}
+	return &typecheck.Callable{
+		Name:       b.name,
+		Params:     []typecheck.Param{{Name: "args", Type: typecheck.Any, Star: true}, {Name: "kwargs", Type: typecheck.Any, StarStar: true}},
+		ReturnType: typecheck.Any,
+	}
+}
+
 // WithDoc sets the docstring for the builtin.
 func (b *Builtin) WithDoc(doc string) *Builtin {
 	b.doc = doc
@@ -906,7 +929,7 @@ func (b *Builtin) WithDoc(doc string) *Builtin {
 //     "abc".index("a")
 //
 func (b *Builtin) BindReceiver(recv Value) *Builtin {
-	return &Builtin{name: b.name, fn: b.fn, recv: recv}
+	return &Builtin{name: b.name, fn: b.fn, recv: recv, sig: b.sig}
 }
 
 // A *Dict represents a Starlark dictionary.
