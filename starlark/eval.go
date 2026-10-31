@@ -11,6 +11,7 @@ import (
 	"log"
 	"math/big"
 	"sort"
+	"strconv"
 	"strings"
 	"sync/atomic"
 	"time"
@@ -1558,11 +1559,23 @@ func interpolate(format string, x Value) (Value, error) {
 			}
 		}
 
-		// NOTE: Starlark does not support any of these optional Python features:
-		// - optional conversion flags: [#0- +], etc.
-		// - optional minimum field width (number or *).
-		// - optional precision (.123 or *)
-		// - optional length modifier
+		// This dialect supports a decimal minimum field width for integer
+		// conversions, including Python-style zero padding such as %02d.
+		// Other optional Python formatting features remain unsupported.
+		width, zeroPad := 0, false
+		widthEnd := 0
+		for widthEnd < len(format) && format[widthEnd] >= '0' && format[widthEnd] <= '9' {
+			widthEnd++
+		}
+		if widthEnd > 0 {
+			zeroPad = format[0] == '0'
+			parsed, err := strconv.Atoi(format[:widthEnd])
+			if err != nil {
+				return nil, fmt.Errorf("invalid field width %q", format[:widthEnd])
+			}
+			width = parsed
+			format = format[widthEnd:]
+		}
 
 		// conversion type
 		if format == "" {
@@ -1570,6 +1583,9 @@ func interpolate(format string, x Value) (Value, error) {
 		}
 		switch c := format[0]; c {
 		case 's', 'r':
+			if widthEnd > 0 {
+				return nil, fmt.Errorf("%%%c format does not support field width", c)
+			}
 			if str, ok := AsString(arg); ok && c == 's' {
 				buf.WriteString(str)
 			} else {
@@ -1580,23 +1596,32 @@ func interpolate(format string, x Value) (Value, error) {
 			if err != nil {
 				return nil, fmt.Errorf("%%%c format requires integer: %v", c, err)
 			}
-			switch c {
-			case 'd', 'i':
-				fmt.Fprintf(buf, "%d", i)
-			case 'o':
-				fmt.Fprintf(buf, "%o", i)
-			case 'x':
-				fmt.Fprintf(buf, "%x", i)
-			case 'X':
-				fmt.Fprintf(buf, "%X", i)
+			conversion := c
+			if conversion == 'i' {
+				conversion = 'd'
+			}
+			if width > 0 {
+				flag := ""
+				if zeroPad {
+					flag = "0"
+				}
+				fmt.Fprintf(buf, "%"+flag+strconv.Itoa(width)+string(conversion), i)
+			} else {
+				fmt.Fprintf(buf, "%"+string(conversion), i)
 			}
 		case 'e', 'f', 'g', 'E', 'F', 'G':
+			if widthEnd > 0 {
+				return nil, fmt.Errorf("%%%c format does not support field width", c)
+			}
 			f, ok := AsFloat(arg)
 			if !ok {
 				return nil, fmt.Errorf("%%%c format requires float, not %s", c, arg.Type())
 			}
 			Float(f).format(buf, c)
 		case 'c':
+			if widthEnd > 0 {
+				return nil, fmt.Errorf("%%c format does not support field width")
+			}
 			switch arg := arg.(type) {
 			case Int:
 				// chr(int)
@@ -1615,6 +1640,9 @@ func interpolate(format string, x Value) (Value, error) {
 				return nil, fmt.Errorf("%%c format requires int or single-character string, not %s", arg.Type())
 			}
 		case '%':
+			if widthEnd > 0 {
+				return nil, fmt.Errorf("%%%% format does not support field width")
+			}
 			buf.WriteByte('%')
 		default:
 			return nil, fmt.Errorf("unknown conversion %%%c", c)
